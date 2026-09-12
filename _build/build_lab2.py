@@ -262,7 +262,7 @@ project would likely also try adding exogenous regressors for the
 holiday-style bumps rather than asking a bigger `(P,D,Q)_7` term to absorb
 them.
 
-Continue to Day 2: [../day2/03_feature_engineering.qmd](../day2/03_feature_engineering.qmd)
+Continue to Day 2: [03_feature_engineering.qmd](../day2/03_feature_engineering.qmd)
 '''
 
 

@@ -170,16 +170,19 @@ lesson (`day1/02_classical_models.qmd`).
 ADF_CELL = '''from statsmodels.tsa.stattools import adfuller
 
 def report_adf(series, label):
-    stat, pvalue, used_lag, nobs, crit_values, _ = adfuller(series.dropna(), autolag="AIC")
+    # result_object=True: the tuple-unpacking return is deprecated in
+    # statsmodels 0.15+ (removed in 0.16 / after July 2027) in favor of a
+    # named ADFullerResult -- see statsmodels release notes.
+    result = adfuller(series.dropna(), autolag="AIC", result_object=True)
     print(f"{label}")
-    print(f"  ADF statistic: {stat:.4f}")
-    print(f"  p-value:       {pvalue:.6f}")
-    print(f"  used lags:     {used_lag}")
-    for level, cv in crit_values.items():
+    print(f"  ADF statistic: {result.statistic:.4f}")
+    print(f"  p-value:       {result.pvalue:.6f}")
+    print(f"  used lags:     {result.lags}")
+    for level, cv in result.critical_values.items():
         print(f"  critical value ({level}): {cv:.4f}")
-    verdict = "stationary (reject the unit-root null)" if pvalue < 0.05 else "NON-stationary (fail to reject the unit-root null)"
+    verdict = "stationary (reject the unit-root null)" if result.pvalue < 0.05 else "NON-stationary (fail to reject the unit-root null)"
     print(f"  => {verdict}\\n")
-    return pvalue
+    return result.pvalue
 
 pvalue_raw = report_adf(riyadh_grocery, "Raw series")
 pvalue_diff = report_adf(diffed, "Once-differenced series")

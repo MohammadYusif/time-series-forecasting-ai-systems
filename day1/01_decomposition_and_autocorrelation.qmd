@@ -168,7 +168,8 @@ stationary.
 ```python
 from statsmodels.tsa.stattools import adfuller
 
-stat, pvalue, used_lag, nobs, crit_values, icbest = adfuller(series, autolag="AIC")
+result = adfuller(series, autolag="AIC", result_object=True)
+stat, pvalue = result.statistic, result.pvalue
 ```
 
 On the raw Riyadh/Grocery level, this comes back statistic = −3.87,
@@ -190,7 +191,8 @@ First-differencing settles it decisively. On $y_t - y_{t-1}$:
 
 ```python
 diffed = series.diff().dropna()
-stat, pvalue, *_ = adfuller(diffed, autolag="AIC")
+result = adfuller(diffed, autolag="AIC", result_object=True)
+stat, pvalue = result.statistic, result.pvalue
 ```
 
 statistic = −9.85, p < 0.000001 — unambiguous. The ACF of the differenced

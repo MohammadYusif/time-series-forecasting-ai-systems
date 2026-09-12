@@ -221,4 +221,4 @@ Two honest results worth sitting with, not smoothing over:
    report holdout accuracy from a single 28-day window as the final word;
    Day 2's backtesting lesson is precisely about not trusting one split.
 
-Continue to the lab: [02_lab_arima_ets](02_lab_arima_ets.ipynb)
+Continue to the lab: [Lab 2 — Classical Forecasting: ARIMA & Exponential Smoothing](02_lab_arima_ets.ipynb)

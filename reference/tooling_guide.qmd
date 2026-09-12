@@ -3,7 +3,7 @@ title: "Tooling Guide"
 ---
 
 A fast-lookup companion to
-[day3/06_model_comparison](../day3/06_model_comparison.qmd), which has
+[Model Comparison: Choosing a Forecasting Family](../day3/06_model_comparison.qmd), which has
 the fuller decision framework (history length, number of series, whether
 you need intervals, exogenous regressors, intermittent demand). This page
 is the scannable version: what each of the course's four tools is for, its
@@ -14,9 +14,9 @@ API shape in one snippet, and where it wins or loses.
 | **What it is** | Classical univariate models (ARIMA/SARIMAX, ETS) | Additive decomposable model with automatic changepoints & holidays | A common `fit`/`predict` API wrapping many forecasters | Gradient-boosted trees on hand-engineered features |
 | **Native intervals?** | Yes (`get_forecast().conf_int()`) | Yes (`yhat_lower`/`yhat_upper`) | Yes, for forecasters that support it (`predict_interval`/`predict_quantiles`) | No — needs quantile objectives or conformal wrapping |
 | **Multi-series** | One at a time | One at a time (loop yourself) | Yes — panel/hierarchical support | Yes, natively (stack series with an id column) |
-| **Needs feature engineering** | No | No | Depends on the wrapped forecaster | Yes — always (see [day2/03_feature_engineering](../day2/03_feature_engineering.qmd)) |
+| **Needs feature engineering** | No | No | Depends on the wrapped forecaster | Yes — always (see [Feature Engineering for Tree-Based Forecasting](../day2/03_feature_engineering.qmd)) |
 | **Exogenous regressors** | Yes (`exog=`) | Yes (`add_regressor`) | Depends on the wrapped forecaster | Yes — just more feature columns |
-| **Typical fit time** | Fast | Slower — first call compiles/caches cmdstan (see [troubleshooting](troubleshooting.qmd)) | Depends on the wrapped forecaster | Fast |
+| **Typical fit time** | Fast | Slower — first call compiles/caches cmdstan (see [Troubleshooting](troubleshooting.qmd)) | Depends on the wrapped forecaster | Fast |
 
 ## statsmodels
 
@@ -35,7 +35,7 @@ lower, upper = forecast.conf_int(alpha=0.2).T  # 80% interval
 ```
 
 **Strengths:** interpretable coefficients, mature residual diagnostics
-(Ljung-Box, AIC/BIC — see [day1/02_classical_models](../day1/02_classical_models.qmd)),
+(Ljung-Box, AIC/BIC — see [Classical Forecasting Models](../day1/02_classical_models.qmd)),
 fits in milliseconds, no training data needed beyond the one series.
 
 **Weaknesses:** one series at a time — no native panel fitting; you pick
@@ -73,7 +73,7 @@ non-technical stakeholder to read via `m.plot_components(forecast)`.
 
 **Weaknesses:** the input **must** be named exactly `ds`/`y` (a constant
 source of the first error students hit — see
-[troubleshooting](troubleshooting.qmd)); changepoint selection is
+[Troubleshooting](troubleshooting.qmd)); changepoint selection is
 semi-automatic and can feel like a black box; the first call in a fresh
 environment is noticeably slow while cmdstan compiles and caches; on a
 cleanly seasonal series, a tuned ARIMA or a properly feature-engineered
@@ -121,7 +121,7 @@ than calling statsmodels or LightGBM directly.
 
 **Reach for it when:** you want one API to compare several model
 families quickly (exactly the job of
-[day3/06_model_comparison](../day3/06_model_comparison.qmd)), need
+[Model Comparison: Choosing a Forecasting Family](../day3/06_model_comparison.qmd)), need
 prediction intervals from a model that doesn't offer them natively, or
 you're forecasting many related series at once.
 
@@ -131,7 +131,7 @@ you're forecasting many related series at once.
 the series — lags, rolling stats, calendar features — the Day 2 approach.
 LightGBM itself has no notion of "time"; every bit of temporal structure
 has to arrive as a column (see
-[day2/03_feature_engineering](../day2/03_feature_engineering.qmd) for
+[Feature Engineering for Tree-Based Forecasting](../day2/03_feature_engineering.qmd) for
 why tree models need this and plain ARIMA doesn't).
 
 ```python
@@ -153,7 +153,7 @@ and let the trees learn cross-series patterns.
 features yourself, and get multi-step recursive forecasting right or
 silently leak future values into past-looking lag columns (the single
 most common correctness bug in this course — see
-[troubleshooting](troubleshooting.qmd)); trees can't extrapolate past the
+[Troubleshooting](troubleshooting.qmd)); trees can't extrapolate past the
 range of values their splits saw in training, so a strong ongoing trend
 is a genuine weak spot; needs enough history to build reliable lag/rolling
 features before the first fold can even be scored.
@@ -165,9 +165,9 @@ yourself.
 
 ## See also
 
-- [day3/06_model_comparison](../day3/06_model_comparison.qmd) — the
+- [Model Comparison: Choosing a Forecasting Family](../day3/06_model_comparison.qmd) — the
   full decision framework this page summarizes
-- [reference/metrics_cheatsheet](metrics_cheatsheet.qmd) — how to
+- [Metrics Cheat Sheet](metrics_cheatsheet.qmd) — how to
   score whatever these tools hand back
-- [reference/troubleshooting](troubleshooting.qmd) — the specific
+- [Troubleshooting](troubleshooting.qmd) — the specific
   errors each of these four tools tends to throw

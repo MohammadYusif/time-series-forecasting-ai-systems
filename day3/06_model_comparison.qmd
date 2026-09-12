@@ -196,4 +196,4 @@ MASE/WAPE bar — the point isn't finding one "winner" in the abstract, it's
 producing the kind of side-by-side comparison a real forecasting decision
 is actually made from.
 
-Continue to the lab: [06_lab_model_comparison](06_lab_model_comparison.ipynb)
+Continue to the lab: [Lab 6 — Comparing Model Families Across All Four Datasets](06_lab_model_comparison.ipynb)

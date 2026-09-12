@@ -206,8 +206,7 @@ can legitimately hit zero — `log(0)` is undefined, `log1p(0) = 0` is fine.
 It buys you safety, not a fix: `data/intermittent_demand.csv` is ~95% zero
 rows, and `log1p` of a pile of zeros is still a pile of zeros — a target
 transform doesn't solve sparse-demand forecasting (that needs a different
-approach entirely, covered in [Day 3's model-comparison
-page](../day3/06_model_comparison.qmd)).
+approach entirely, covered in [Model Comparison: Choosing a Forecasting Family](../day3/06_model_comparison.qmd)).
 
 If you train on `log1p_units`, remember to invert before scoring —
 `common/metrics.py`'s functions expect real units, not log units:
@@ -317,4 +316,4 @@ build a walk-forward loop where it can't happen by construction — is the
 whole subject of the next page.
 
 Continue to the lab:
-[03_lab_lightgbm_forecast](03_lab_lightgbm_forecast.ipynb)
+[Lab 3 — Gradient-Boosted Forecasting with LightGBM](03_lab_lightgbm_forecast.ipynb)

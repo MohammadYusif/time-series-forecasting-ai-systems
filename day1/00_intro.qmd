@@ -61,7 +61,7 @@ seeded — running it again reproduces the four CSVs byte-for-byte — so if you
 ever want to see exactly how a series was built, that script is the ground
 truth, not a black box.
 
-The [setup page](../setup.qmd) covers running the labs, but the short
+The [Setup](../setup.qmd) covers running the labs, but the short
 version is: open a lab notebook in Colab and run the first cell. It installs
 its own packages and fetches the CSV and utility files it needs directly
 from this repository. Nothing to clone, nothing to install locally, unless
@@ -127,9 +127,9 @@ intervals, and whether the demand is intermittent, which of the four tools
 above is the right one to reach for? The capstone applies all of it to one
 real-world-shaped brief.
 
-The [assessment page](../assessment.qmd) has an ungraded pre/post
+The [Pre-Course Assessment](../assessment.qmd) has an ungraded pre/post
 knowledge check if you want to gauge where you're starting from, and the
-[capstone brief](../capstone.qmd) is worth reading early — it names
+[Capstone: A Backtested Forecasting Report](../capstone.qmd) is worth reading early — it names
 exactly which of the next six lessons' techniques your final report needs
 to demonstrate.
 

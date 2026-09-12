@@ -11,6 +11,7 @@ import nbformat as nbf
 
 nb = nbf.v4.new_notebook()
 cells = []
+cells.append(nbf.v4.new_raw_cell('---\ntitle: "Lab 5 — Probabilistic Forecasts"\n---\n'))
 cells.append(nbf.v4.new_markdown_cell('<a href="https://colab.research.google.com/github/MohammadYusif/time-series-forecasting-ai-systems/blob/main/day3/05_lab_probabilistic_forecasts.ipynb" target="_blank" rel="noopener"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>'))
 
 # ---------------------------------------------------------------------------
@@ -414,7 +415,7 @@ built those features yet, or need an interval on day one:
   one forecaster.
 
 Continue to the next lesson:
-[06_model_comparison](../day3/06_model_comparison.qmd)."""
+[Model Comparison: Choosing a Forecasting Family](../day3/06_model_comparison.qmd)."""
 ))
 
 nb["cells"] = cells

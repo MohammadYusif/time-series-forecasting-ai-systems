@@ -231,9 +231,9 @@ never quote a `coverage` number in isolation from `interval_width` again.
 
 ## See also
 
-- [day2/04_backtesting](../day2/04_backtesting.qmd) — where these
+- [Backtesting Frameworks & Time-Based Validation](../day2/04_backtesting.qmd) — where these
   metrics get computed per fold, not just once
-- [day3/05_probabilistic_forecasting](../day3/05_probabilistic_forecasting.qmd)
+- [Probabilistic Forecasting: Intervals, Quantiles, and Calibration](../day3/05_probabilistic_forecasting.qmd)
   — pinball loss, coverage, and interval width in a full workflow
-- [reference/tooling_guide](tooling_guide.qmd) — which library hands
+- [Tooling Guide](tooling_guide.qmd) — which library hands
   you `predict_interval`/`predict_quantiles` without hand-rolling one

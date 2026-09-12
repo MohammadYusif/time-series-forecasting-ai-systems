@@ -12,6 +12,7 @@ import nbformat as nbf
 OUT = pathlib.Path(__file__).resolve().parent.parent / "day2" / "03_lab_lightgbm_forecast.ipynb"
 
 cells = []
+cells.append(nbf.v4.new_raw_cell('---\ntitle: "Lab 3 — Gradient-Boosted Forecasting with LightGBM"\n---\n'))
 cells.append(nbf.v4.new_markdown_cell('<a href="https://colab.research.google.com/github/MohammadYusif/time-series-forecasting-ai-systems/blob/main/day2/03_lab_lightgbm_forecast.ipynb" target="_blank" rel="noopener"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>'))
 
 # ---------------------------------------------------------------------------
@@ -416,7 +417,7 @@ all of the lag features feeding the model are themselves predictions, not
 observations — the further out the forecast, the less "real" the input, and
 the more a single bad early step can echo through everything after it.
 
-Continue to the next page: [04_backtesting](04_backtesting.qmd)."""
+Continue to the next page: [Backtesting Frameworks & Time-Based Validation](04_backtesting.qmd)."""
 ))
 
 nb = nbf.v4.new_notebook()

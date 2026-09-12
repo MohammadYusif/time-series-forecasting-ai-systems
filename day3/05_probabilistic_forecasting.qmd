@@ -249,4 +249,4 @@ Prophet's native `yhat_lower`/`yhat_upper`, and an sktime forecaster's
 any single method in isolation, is the actual skill objective 6 is asking
 for.
 
-Continue to the lab: [05_lab_probabilistic_forecasts](05_lab_probabilistic_forecasts.ipynb)
+Continue to the lab: [Lab 5 — Probabilistic Forecasts](05_lab_probabilistic_forecasts.ipynb)

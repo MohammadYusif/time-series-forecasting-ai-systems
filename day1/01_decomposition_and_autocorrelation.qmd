@@ -227,4 +227,4 @@ AR term — to choose and fit ARIMA, SARIMA, and the exponential smoothing
 family, and to compare the candidates formally with AIC/BIC and the
 Ljung-Box test.
 
-Continue to the lab: [01_lab_decomposition](01_lab_decomposition.ipynb)
+Continue to the lab: [Lab 1 — Decomposition & Autocorrelation](01_lab_decomposition.ipynb)

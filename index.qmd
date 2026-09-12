@@ -60,5 +60,5 @@ lab.
 ## Get started
 
 Head to **[Setup](setup.qmd)** to open the first lab, or start reading
-from **[Day 1](day1/00_intro.qmd)** if you'd rather begin with the
+from **[Course Overview](day1/00_intro.qmd)** if you'd rather begin with the
 material.

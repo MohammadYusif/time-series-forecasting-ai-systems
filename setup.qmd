@@ -11,7 +11,7 @@ the test suite or regenerate the datasets yourself).
 
 Open any lab notebook's Colab badge from the sidebar, or go straight to
 one, for example
-[day1/01_lab_decomposition](day1/01_lab_decomposition.ipynb). Run
+[Lab 1 — Decomposition & Autocorrelation](day1/01_lab_decomposition.ipynb). Run
 the first cell and stop reading this page — that's the whole setup.
 
 Every lab notebook's first code cell is the same shape:

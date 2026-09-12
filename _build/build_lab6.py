@@ -438,6 +438,7 @@ one algorithm as the course's "best" and using it everywhere.
 def build() -> None:
     nb = nbf.v4.new_notebook()
     nb.cells = [
+        nbf.v4.new_raw_cell('---\ntitle: "Lab 6 — Comparing Model Families Across All Four Datasets"\n---\n'),
         nbf.v4.new_markdown_cell('<a href="https://colab.research.google.com/github/MohammadYusif/time-series-forecasting-ai-systems/blob/main/day3/06_lab_model_comparison.ipynb" target="_blank" rel="noopener"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>'),
         nbf.v4.new_markdown_cell(CLOSING_INTRO_MD),
         nbf.v4.new_markdown_cell(SETUP_MD),

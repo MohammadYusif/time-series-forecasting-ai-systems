@@ -298,19 +298,20 @@ Three things from this lab feed directly into the next one
    it look like noise?" — is what Ljung-Box formalizes for a fitted model's
    residuals in the next lesson.
 
-Continue to the next lesson: [02_classical_models](02_classical_models.qmd)
+Continue to the next lesson: [Classical Forecasting Models](02_classical_models.qmd)
 '''
 
 
 def build() -> None:
     nb = nbf.v4.new_notebook()
     nb.cells = [
+        nbf.v4.new_raw_cell('---\ntitle: "Lab 1 — Decomposition & Autocorrelation"\n---\n'),
         nbf.v4.new_markdown_cell('<a href="https://colab.research.google.com/github/MohammadYusif/time-series-forecasting-ai-systems/blob/main/day1/01_lab_decomposition.ipynb" target="_blank" rel="noopener"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>'),
         nbf.v4.new_markdown_cell(
             "## Lab 1 — Decomposition & Autocorrelation\n"
             "\n"
             "This lab is the hands-on companion to "
-            "[01_decomposition_and_autocorrelation](01_decomposition_and_autocorrelation.qmd). "
+            "[Trend, Seasonality & Autocorrelation](01_decomposition_and_autocorrelation.qmd). "
             "It works with the `retail_demand.csv` golden-thread dataset "
             "(Riyadh/Grocery, daily units sold) to build the skill of "
             "*reading* a time series before modeling it: separating trend, "

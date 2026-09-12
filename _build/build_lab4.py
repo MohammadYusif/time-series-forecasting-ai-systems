@@ -356,6 +356,7 @@ site — is invoked fresh, inside the callable, once per fold.
 def build():
     nb = nbf.v4.new_notebook()
     nb.cells = [
+        nbf.v4.new_raw_cell('---\ntitle: "Lab 4 — Does the Verdict Survive More Than One Holdout?"\n---\n'),
         nbf.v4.new_markdown_cell('<a href="https://colab.research.google.com/github/MohammadYusif/time-series-forecasting-ai-systems/blob/main/day2/04_lab_backtesting_framework.ipynb" target="_blank" rel="noopener"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>'),
         nbf.v4.new_markdown_cell(INTRO_MD),
         nbf.v4.new_code_cell(SETUP_CELL),
@@ -404,7 +405,7 @@ def build():
         nbf.v4.new_markdown_cell(LEAKAGE_MD),
         nbf.v4.new_markdown_cell(
             "Continue to the next lesson: "
-            "[05_probabilistic_forecasting](../day3/05_probabilistic_forecasting.qmd)"
+            "[Probabilistic Forecasting: Intervals, Quantiles, and Calibration](../day3/05_probabilistic_forecasting.qmd)"
         ),
     ]
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,173 @@
+---
+title: "Tooling Guide"
+---
+
+A fast-lookup companion to
+[day3/06_model_comparison.qmd](../day3/06_model_comparison.qmd), which has
+the fuller decision framework (history length, number of series, whether
+you need intervals, exogenous regressors, intermittent demand). This page
+is the scannable version: what each of the course's four tools is for, its
+API shape in one snippet, and where it wins or loses.
+
+| | statsmodels | Prophet | sktime | LightGBM |
+|---|---|---|---|---|
+| **What it is** | Classical univariate models (ARIMA/SARIMAX, ETS) | Additive decomposable model with automatic changepoints & holidays | A common `fit`/`predict` API wrapping many forecasters | Gradient-boosted trees on hand-engineered features |
+| **Native intervals?** | Yes (`get_forecast().conf_int()`) | Yes (`yhat_lower`/`yhat_upper`) | Yes, for forecasters that support it (`predict_interval`/`predict_quantiles`) | No — needs quantile objectives or conformal wrapping |
+| **Multi-series** | One at a time | One at a time (loop yourself) | Yes — panel/hierarchical support | Yes, natively (stack series with an id column) |
+| **Needs feature engineering** | No | No | Depends on the wrapped forecaster | Yes — always (see [day2/03_feature_engineering.qmd](../day2/03_feature_engineering.qmd)) |
+| **Exogenous regressors** | Yes (`exog=`) | Yes (`add_regressor`) | Depends on the wrapped forecaster | Yes — just more feature columns |
+| **Typical fit time** | Fast | Slower — first call compiles/caches cmdstan (see [troubleshooting](troubleshooting.qmd)) | Depends on the wrapped forecaster | Fast |
+
+## statsmodels
+
+**For:** ARIMA/SARIMAX and the exponential-smoothing family (SES, Holt,
+Holt-Winters/ETS) — the classical models from Day 1. One series, one
+model, transparent coefficients you can read and defend.
+
+```python
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+model = SARIMAX(y_train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 7))
+fit = model.fit(disp=False)
+forecast = fit.get_forecast(steps=14)
+point = forecast.predicted_mean
+lower, upper = forecast.conf_int(alpha=0.2).T  # 80% interval
+```
+
+**Strengths:** interpretable coefficients, mature residual diagnostics
+(Ljung-Box, AIC/BIC — see [day1/02_classical_models.qmd](../day1/02_classical_models.qmd)),
+fits in milliseconds, no training data needed beyond the one series.
+
+**Weaknesses:** one series at a time — no native panel fitting; you pick
+`(p,d,q)`/`(P,D,Q,m)` yourself (statsmodels ships no `auto_arima` — that's
+a `pmdarima`/sktime feature, not in this course's toolset); doesn't take
+arbitrary ML-style features well beyond a plain `exog=` matrix; a model
+that looked fine in backtesting can fail hard after a genuine regime
+shift (see `data/workforce_demand.csv`'s 2025-04-01 structural break).
+
+**Reach for it when:** one series, a few years of history at most,
+interpretability matters more than squeezing out the last point of
+accuracy, and you want a defensible classical baseline before reaching
+for anything heavier.
+
+## Prophet
+
+**For:** a robust, mostly-automatic decomposable model — trend +
+seasonality + holidays — that requires almost no tuning to get a
+reasonable first forecast.
+
+```python
+from prophet import Prophet
+
+df_p = pd.DataFrame({"ds": dates_train, "y": y_train})
+m = Prophet(interval_width=0.8, weekly_seasonality=True, yearly_seasonality=True)
+m.fit(df_p)
+future = m.make_future_dataframe(periods=14)
+forecast = m.predict(future)  # columns: yhat, yhat_lower, yhat_upper
+```
+
+**Strengths:** sane defaults out of the box, handles missing data and
+outliers gracefully, built-in prediction intervals, holiday/event effects
+are one `add_regressor`/`holidays=` argument away, easy for a
+non-technical stakeholder to read via `m.plot_components(forecast)`.
+
+**Weaknesses:** the input **must** be named exactly `ds`/`y` (a constant
+source of the first error students hit — see
+[troubleshooting](troubleshooting.qmd)); changepoint selection is
+semi-automatic and can feel like a black box; the first call in a fresh
+environment is noticeably slow while cmdstan compiles and caches; on a
+cleanly seasonal series, a tuned ARIMA or a properly feature-engineered
+LightGBM model usually beats it on raw accuracy — Prophet's edge is
+robustness and speed-to-first-forecast, not best-in-class accuracy.
+
+**Reach for it when:** you want a strong default with minimal tuning,
+calendar/holiday effects matter, or you need a quick, presentable
+uncertainty band without hand-building one.
+
+## sktime
+
+**For:** one consistent `fit`/`predict` API across many forecaster
+families — including thin wrappers around statsmodels and Prophet
+themselves — plus a common way to ask any of them for intervals or
+quantiles.
+
+```python
+from sktime.forecasting.arima import AutoARIMA
+from sktime.forecasting.base import ForecastingHorizon
+import numpy as np
+
+forecaster = AutoARIMA(sp=7, suppress_warnings=True)
+forecaster.fit(y_train)
+fh = ForecastingHorizon(np.arange(1, 15), is_relative=True)
+point = forecaster.predict(fh)
+intervals = forecaster.predict_interval(fh, coverage=0.8)
+quantiles = forecaster.predict_quantiles(fh, alpha=[0.1, 0.5, 0.9])
+```
+
+**Strengths:** swap model families (ARIMA ↔ ETS ↔ Prophet ↔ a wrapped ML
+regressor) behind the same three or four method calls;
+`predict_interval`/`predict_quantiles` work the same way regardless of
+which forecaster is underneath, so you don't hand-roll uncertainty for
+every model separately; panel/hierarchical forecasting (many related
+series) is a first-class case, not a loop you write yourself.
+
+**Weaknesses:** an extra abstraction layer over whatever it's wrapping,
+so an error sometimes reports from sktime's side rather than the
+underlying library's, one step removed from the real cause; the API has
+genuinely broken across versions before — pin the version (this course
+was built and verified against **sktime 1.1.0**; if an example doesn't
+match what you see, `pip show sktime` first); heavier dependency tree
+than calling statsmodels or LightGBM directly.
+
+**Reach for it when:** you want one API to compare several model
+families quickly (exactly the job of
+[day3/06_model_comparison.qmd](../day3/06_model_comparison.qmd)), need
+prediction intervals from a model that doesn't offer them natively, or
+you're forecasting many related series at once.
+
+## LightGBM
+
+**For:** gradient-boosted trees on a feature-engineered tabular version of
+the series — lags, rolling stats, calendar features — the Day 2 approach.
+LightGBM itself has no notion of "time"; every bit of temporal structure
+has to arrive as a column (see
+[day2/03_feature_engineering.qmd](../day2/03_feature_engineering.qmd) for
+why tree models need this and plain ARIMA doesn't).
+
+```python
+import lightgbm as lgb
+
+# X_train columns like: lag_1, lag_7, rolling_mean_28, dayofweek, is_weekend, ...
+model = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31)
+model.fit(X_train, y_train_target)
+y_pred = model.predict(X_test)
+```
+
+**Strengths:** eats exogenous and calendar features naturally (promos,
+holidays, day-of-week, price) and finds nonlinear interactions between
+them that a linear/ARIMA model can't; trains fast even with many
+features; naturally multi-series if you stack series with an id column
+and let the trees learn cross-series patterns.
+
+**Weaknesses:** no implicit recurrence — you must engineer lag/rolling
+features yourself, and get multi-step recursive forecasting right or
+silently leak future values into past-looking lag columns (the single
+most common correctness bug in this course — see
+[troubleshooting](troubleshooting.qmd)); trees can't extrapolate past the
+range of values their splits saw in training, so a strong ongoing trend
+is a genuine weak spot; needs enough history to build reliable lag/rolling
+features before the first fold can even be scored.
+
+**Reach for it when:** you have useful exogenous features (promos,
+holidays, price, weather) or many related series to learn across, and
+you're prepared to build — and leakage-test — the feature pipeline
+yourself.
+
+## See also
+
+- [day3/06_model_comparison.qmd](../day3/06_model_comparison.qmd) — the
+  full decision framework this page summarizes
+- [reference/metrics_cheatsheet.qmd](metrics_cheatsheet.qmd) — how to
+  score whatever these tools hand back
+- [reference/troubleshooting.qmd](troubleshooting.qmd) — the specific
+  errors each of these four tools tends to throw

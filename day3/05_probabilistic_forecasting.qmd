@@ -1,0 +1,252 @@
+---
+title: "Probabilistic Forecasting: Intervals, Quantiles, and Calibration"
+---
+
+Every model in Days 1 and 2 produced one number per future time step. That
+single number is a point forecast, and it quietly answers a question nobody
+asked: "what is the single most likely value?" The question a demand planner
+or a workforce manager actually has is different — "how wrong might this be,
+and in which direction?" This lesson is about answering that second
+question honestly, and about telling a good answer from a fake one.
+
+Take `data/workforce_demand.csv`. After the 2025-04-01 step-change, the
+series averages about **87** required staff a day. Telling a manager
+"staff for 87" and telling them "staff for somewhere between 74 and 100, and
+we're 80% sure of that" are very different instructions — the second one is
+plannable, the first one just looks precise. Objective 6 of this course is
+producing that second kind of statement, and doing it in a way you can check
+rather than merely claim.
+
+## Point vs. probabilistic forecasts
+
+A **point forecast** is a single value ŷₜ for each future step t. A
+**probabilistic forecast** is a distribution, or at least a slice of one —
+in practice, almost always delivered as one of:
+
+- a **prediction interval** `[Lₜ, Uₜ]` at a nominal coverage level (80%, 95%);
+- a small set of **quantiles** (e.g. the 10th, 50th, and 90th percentile of
+  the predictive distribution at each t);
+- occasionally, a full predictive density — rare in applied forecasting,
+  and not something any tool in this course hands you by default.
+
+A prediction interval and a pair of quantiles are the same object described
+two ways: an 80% interval is exactly the gap between the 10th and 90th
+percentile forecasts. Every method below produces one or the other, and you
+can always convert.
+
+**What "80% coverage" actually means.** If you build an 80% interval at
+every forecast origin across a long backtest, roughly 80% of those
+intervals should contain the value that actually occurred. It is a
+statement about the *long-run behavior of the procedure*, not a guarantee
+about any single interval you happen to be looking at. This is why
+calibration is checked empirically, over many folds — never eyeballed from
+one plot.
+
+## Recap: quantile regression and pinball loss
+
+`common/metrics.py`'s `pinball_loss(y_true, y_pred_quantile, quantile)`
+scores one predicted quantile:
+
+```python
+def pinball_loss(y_true, y_pred_quantile, quantile):
+    diff = y_true - y_pred_quantile
+    return np.mean(np.maximum(quantile * diff, (quantile - 1) * diff))
+```
+
+The asymmetry is the entire idea. For `quantile=0.9` (you're predicting the
+90th percentile), under-predicting costs `0.9 × |diff|` but over-predicting
+only costs `0.1 × |diff|` — the loss is built to prefer a forecast that
+sits *above* the data 90% of the time. For `quantile=0.1` it's the mirror
+image. A regressor trained to minimize `pinball_loss` at `quantile=0.9` is
+not trying to be accurate on average; it's trying to be an honest upper
+bound.
+
+This is directly trainable. LightGBM (Day 2's model of choice) supports a
+quantile objective natively:
+
+```python
+import lightgbm as lgb
+
+q10 = lgb.LGBMRegressor(objective="quantile", alpha=0.10)
+q50 = lgb.LGBMRegressor(objective="quantile", alpha=0.50)
+q90 = lgb.LGBMRegressor(objective="quantile", alpha=0.90)
+
+for model in (q10, q50, q90):
+    model.fit(X_train, y_train)
+
+lower = q10.predict(X_test)
+median = q50.predict(X_test)
+upper = q90.predict(X_test)
+```
+
+Three separately trained models, one per quantile, using the same lag and
+calendar features from `day2/03_feature_engineering.qmd`. The `[lower,
+upper]` pair from `q10`/`q90` is an 80% prediction interval by
+construction.
+
+**The gotcha to check for: quantile crossing.** Because `q10`, `q50`, and
+`q90` are three independent models, nothing stops the 90th-percentile model
+from predicting *below* the 10th-percentile model's output on some row —
+especially near the edges of the feature space. Always verify
+`lower <= median <= upper` element-wise after predicting, and sort/clip
+if it fails on any rows before reporting an interval built this way.
+
+## Conformal prediction: a distribution-free wrapper
+
+Quantile regression requires retraining a model per quantile. Conformal
+prediction takes a different, more general approach: wrap *any* existing
+point forecaster with an interval, using nothing but its own recent
+mistakes.
+
+**The idea, in one pass (split conformal):**
+
+1. Fit your point model on a training window, as usual.
+2. Hold out a separate **calibration window** the model did not train on.
+   Get the model's point forecasts on it, and compute the absolute
+   residuals `|y_actual - y_pred|` for every point in that window.
+3. Take the `(1 - α)` quantile of those calibration residuals — call it
+   `q̂`. This is your margin.
+4. For any new point forecast ŷ, report the interval `[ŷ - q̂, ŷ + q̂]`.
+
+No distributional assumption about the noise, no retraining per quantile —
+just "how wrong was I recently, at the level I'm willing to tolerate."
+
+**Worked example.** Take the Riyadh/Grocery series in
+`data/retail_demand.csv` (mean ≈ 670 units/day, std ≈ 207). Suppose your Day
+2 LightGBM model forecasts a 90-day calibration window and its absolute
+residuals on that window have a 90th percentile of about 140 units — a
+plausible number for a model that's beating naive but still missing some
+promo shocks. For a new point forecast of 705 units, the resulting 90%
+conformal interval is:
+
+```
+lower = 705 - 140 = 565
+upper = 705 + 140 = 845
+```
+
+No refit, no quantile-crossing risk, and it works with a model that has no
+native notion of uncertainty at all — an ARIMA model, a LightGBM point
+regressor, even a naive seasonal baseline.
+
+**The honest caveat.** Split conformal's coverage guarantee formally
+assumes the calibration residuals and the future test residual are
+*exchangeable* — informally, drawn from the same distribution in an order
+that doesn't matter. Time series routinely breaks this: `data/
+workforce_demand.csv`'s structural break on 2025-04-01 means residuals
+calibrated on pre-break data say nothing reliable about post-break error —
+the margin computed in step 3 would be too narrow right when it matters
+most. The practical fix used in production forecasting (and the one worth
+building into your own backtest) is to **recompute the calibration margin
+inside each walk-forward fold** rather than once, globally — plug this
+residual-quantile step into `common/backtest.py`'s `run_backtest` loop so
+`q̂` is recalculated from whatever the most recent calibration window
+looked like, fold by fold. That doesn't restore an exact theoretical
+guarantee, but it keeps the margin honest about *recent* model behavior
+instead of stale behavior from a regime that may no longer hold.
+
+## Prophet's built-in uncertainty
+
+Prophet ships uncertainty intervals out of the box, built from two
+separate sources:
+
+- **Trend uncertainty.** Prophet's trend is piecewise linear (or logistic)
+  with changepoints. It doesn't know where *future* changepoints will
+  land, so — in its default MAP mode — it simulates plausible future
+  trend changes by resampling from the empirical rate and magnitude of
+  the changepoints it found in your *history*. This is why Prophet
+  intervals widen the further out you forecast: more future steps means
+  more simulated opportunities for the trend to have bent.
+- **Observation noise.** A fixed additive term (`sigma_obs`) estimated
+  from in-sample residual scale. Unlike trend uncertainty, this doesn't
+  grow with the forecast horizon.
+
+```python
+from prophet import Prophet
+
+m = Prophet(interval_width=0.80)          # nominal coverage
+m.fit(train_df)                            # columns: ds, y
+future = m.make_future_dataframe(periods=28)
+fcst = m.predict(future)
+
+fcst[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(28)
+```
+
+`interval_width` sets the nominal level directly — 0.80 asks for an 80%
+interval. By default Prophet only accounts for trend and observation
+noise; if you also want *seasonality* uncertainty reflected in the
+interval, fit with `mcmc_samples=300` (or similar) to get a full posterior
+via MCMC instead of the fast MAP point estimate — meaningfully more
+compute for a fuller accounting of what's actually unknown.
+
+## sktime's `predict_interval` / `predict_quantiles`
+
+sktime standardizes the interval/quantile API across every forecaster it
+wraps — an ARIMA model, an ETS model, a reduction-based LightGBM
+forecaster — so the same two calls work regardless of what's underneath:
+
+```python
+from sktime.forecasting.arima import ARIMA
+
+forecaster = ARIMA(order=(1, 1, 1), seasonal_order=(1, 1, 1, 7))
+forecaster.fit(y_train)
+
+fh = list(range(1, 29))  # forecast 28 steps ahead
+
+pred_int = forecaster.predict_interval(fh=fh, coverage=0.8)
+pred_quantiles = forecaster.predict_quantiles(fh=fh, alpha=[0.1, 0.5, 0.9])
+```
+
+`predict_interval` returns a `DataFrame` with `MultiIndex` columns —
+`(variable_name, coverage_level, "lower"/"upper")` — so
+`pred_int[("units_sold", 0.8, "lower")]` is the lower 80% bound at every
+horizon step. `predict_quantiles` returns the same shape keyed by quantile
+level instead: `pred_quantiles[("units_sold", 0.1)]`.
+
+The point of this uniformity is not aesthetic. It means the calibration
+check below can be written once and pointed at any sktime forecaster — a
+classical ARIMA, an ETS model, or a LightGBM-backed reduction forecaster —
+without touching the scoring code at all. That's a direct payoff of
+Day 3's objective 7 (comparing model families): switching the model family
+under test becomes a one-line change.
+
+## Calibration: coverage and width, always together
+
+`common/metrics.py` gives you the two numbers that matter:
+
+- `coverage(y_true, lower, upper)` — the fraction of actuals that actually
+  fell inside `[lower, upper]`.
+- `interval_width(lower, upper)` — the mean width of that interval.
+
+**Coverage alone is gameable.** An interval of `ŷ ± 5000` on a series that
+averages 670 units will report ~100% coverage every time — it covers
+everything, because it says nothing. **Width alone is meaningless without
+a coverage floor** — a narrow interval is only good news if it's still
+hitting its target.
+
+| Interval | Nominal level | Empirical coverage | Mean width |
+|---|---|---|---|
+| ŷ ± 20 | 80% | 41% | 40 |
+| ŷ ± 145 | 80% | 79% | 290 |
+| ŷ ± 5000 | 80% | 100% | 10,000 |
+
+Only the middle row is a usable 80% interval. The first one is
+overconfident — it under-covers its own target badly. The last one hits
+100% coverage and tells the reader nothing they didn't already know from
+the series' own range. **Always report both numbers side by side** — never
+coverage without width, and never width without a coverage check against
+the nominal level it's supposed to hit. `reference/metrics_cheatsheet.qmd`
+has a table of how far off nominal is "still acceptably calibrated" versus
+"the interval is actually miscalibrated" — use it when judging your own
+backtest's coverage numbers rather than eyeballing "close enough."
+
+## What this buys you going into the lab
+
+By the end of the lab you will have built an interval three different
+ways — conformal residual calibration wrapped around a point model,
+Prophet's native `yhat_lower`/`yhat_upper`, and an sktime forecaster's
+`predict_interval` — and scored all three with the same `coverage` /
+`interval_width` pair on a held-out backtest window. That comparison, not
+any single method in isolation, is the actual skill objective 6 is asking
+for.
+
+Continue to the lab: [05_lab_probabilistic_forecasts.ipynb](05_lab_probabilistic_forecasts.ipynb)

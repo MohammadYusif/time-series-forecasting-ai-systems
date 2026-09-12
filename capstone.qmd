@@ -1,0 +1,155 @@
+---
+title: "Capstone: A Backtested Forecasting Report"
+---
+
+The capstone is one Colab notebook that takes a single time series from
+raw data to a validated, uncertainty-aware forecast — the same shape as
+every lab in this course, not a bigger piece of infrastructure. If you can
+follow the pattern of `day2/04_lab_backtesting_framework.ipynb`, you can
+build this.
+
+::: {.callout-important}
+## Read this first
+The section weights and pass mark below are a **draft rubric**, not yet
+reviewed or approved by the trainer against a real cohort (the process
+this workspace requires before any rubric goes live). The seven sections
+and what each one is asking for are stable; the exact point values could
+still move slightly during that review.
+:::
+
+## Choose your dataset
+
+Pick **one** of the four series already in `data/`:
+
+- `data/retail_demand.csv` — daily, 6 series (`region` × `category`),
+  strong weekly + yearly seasonality, promo shocks. Pick one
+  region/category pair (e.g. Riyadh/Grocery) unless you specifically want
+  to demonstrate a global model across several.
+- `data/workforce_demand.csv` — daily, one series, with a structural break
+  on 2025-04-01. Good if you want your comparison section to include a
+  discussion of backtest design under regime change.
+- `data/economic_indicator.csv` — monthly, one series, 108 points. Good if
+  you want to demonstrate that a short, low-frequency series changes which
+  tools are even appropriate (see `day3/06_model_comparison.qmd`).
+- `data/intermittent_demand.csv` — daily, 4 SKUs, ~95% zero rows. The
+  hardest of the four — pick it if you want to engage directly with why
+  MAPE fails and what "the right tool doesn't exist in this course" looks
+  like as an honest, gradable conclusion.
+
+**With instructor approval**, you may substitute a real dataset of your
+own instead — ask before you start, not after you've built the notebook
+around it. Every number this course itself reports (in the lessons, the
+labs, and `data/generate_series.py`) describes the four synthetic series
+above, not any real retailer, employer, or government indicator — if you
+bring your own data, that same honesty applies to your write-up.
+
+## What the notebook must contain
+
+One notebook. Seven things in it, in markdown and code cells, run start to
+finish with real captured output — not seven files, not a repo of
+modules. This mirrors exactly what the labs already prove works.
+
+1. **Decomposition and diagnostics** — trend/seasonality/residual
+   decomposition of your chosen series, an ACF/PACF read, and a
+   stationarity check (the ADF test), with differencing applied if the
+   series needs it. (`day1/01_decomposition_and_autocorrelation.qmd`)
+2. **At least one classical model** — ARIMA/SARIMA or an exponential
+   smoothing model (SES, Holt, or Holt-Winters/ETS), with a stated
+   rationale for the order/parameters you chose and a residual diagnostic
+   (Ljung-Box) on the fitted model. (`day1/02_classical_models.qmd`)
+3. **At least one ML/GBM model** — LightGBM (or comparable) with
+   engineered temporal features: lags, rolling statistics, and calendar
+   features appropriate to your series' frequency, plus a stated awareness
+   of leakage risk in how those features were built.
+   (`day2/03_feature_engineering.qmd`)
+4. **A walk-forward backtest with at least 3 folds** — using
+   `common/backtest.py`'s harness (`expanding_window_splits` or
+   `rolling_window_splits` + `run_backtest`) or an equivalent you can
+   justify. State which window type you chose and why.
+   (`day2/04_backtesting.qmd`)
+5. **Accuracy metrics, including at least one scale-free metric** — MAE
+   and RMSE, plus MASE or WAPE reported alongside them (`common/
+   metrics.py`). If your series has zeros or near-zeros, that scale-free
+   metric should be WAPE, not MAPE — say why.
+6. **At least one probabilistic/interval forecast, with a reported
+   coverage number** — conformal calibration, Prophet's native intervals,
+   or sktime's `predict_interval`/`predict_quantiles`, scored with
+   `coverage()` **and** `interval_width()` together, not coverage alone.
+   (`day3/05_probabilistic_forecasting.qmd`)
+7. **A written model-comparison and recommendation section**, in markdown
+   cells in the same notebook — which model family you'd actually deploy
+   for this series and why, referencing the axes from `day3/
+   06_model_comparison.qmd` (history length, interpretability, interval
+   support, compute budget) rather than accuracy numbers alone.
+
+Nothing here asks for more apparatus than the labs already used —
+no Docker service, no custom package, no second notebook.
+
+## GitHub requirements (every SDAIA Academy project, this one included)
+
+On top of the seven sections above, every project in every SDAIA Academy
+programme is evaluated on these, and they are part of the grade, not
+paperwork:
+
+- An active **GitHub account** for every trainee — create one if you don't
+  have it yet.
+- The notebook **uploaded to a GitHub repository** (public or private, your
+  choice), kept documented and updated — not left as a local `.ipynb` file
+  you only submit once.
+- A clear, comprehensive **project description** in the repository.
+- A **professional README** — the project idea, which dataset you chose
+  and why, and how to open and run the notebook (the Colab badge from
+  `setup.qmd` is the expected path).
+- Proper **technical documentation** of what the notebook does, beyond
+  what's already in its markdown cells.
+- Good **Git practices** — meaningful, incremental commits (not one
+  giant commit at the deadline), a sane repository structure, and a
+  `.gitignore` that excludes secrets and generated files.
+- A statement of **which training programme** the project was completed
+  under — programme name and cohort dates.
+- A link to **[SDAIA Academy's GitHub](https://github.com/SDAIAAcademy)**
+  where relevant.
+
+*Encouraged, not scored:* star and follow strong Saudi repositories and
+accounts, contribute to open source, engage through forks, pull requests
+and issues, and share standout projects with the community.
+
+## Rubric sections and where each is taught
+
+**100 points total, draft pass mark 60/100** — see
+`grader/grading/rubrics/time-series-forecasting-ai-systems.yaml` in the
+workspace for the full checked-signal breakdown behind each row below.
+
+| # | Section | Points | Taught in | What full marks looks like | The mistake most likely to cost points |
+|---|---|--:|---|---|---|
+| 1 | Time Series Structure & Diagnostics | 15 | [Decomposition & autocorrelation](day1/01_decomposition_and_autocorrelation.qmd) · [Lab](day1/01_lab_decomposition.ipynb) | Decomposition, ACF/PACF, and the ADF test all present and actually *interpreted* in prose — not just plotted. | Running the ADF test, printing a p-value, and never saying what it means for whether the series needs differencing. |
+| 2 | Classical Forecasting Models | 15 | [Classical models](day1/02_classical_models.qmd) · [Lab](day1/02_lab_arima_ets.ipynb) | An ARIMA/SARIMA or ETS model fit with a stated order/parameter rationale, plus a Ljung-Box residual check. | Fitting a model with default or arbitrarily-chosen orders and never checking whether the residuals still have structure left in them. |
+| 3 | ML/GBM Forecasting & Feature Engineering | 15 | [Feature engineering](day2/03_feature_engineering.qmd) · [Lab](day2/03_lab_lightgbm_forecast.ipynb) | Real lag/rolling/calendar features, built with a demonstrated awareness of leakage — especially in multi-step recursive forecasts. | A feature built using information that wouldn't actually be available at forecast time (the leakage trap named explicitly in this course's own lab-building rules). |
+| 4 | Backtesting Framework & Time-Based Validation | 20 | [Backtesting](day2/04_backtesting.qmd) · [Lab](day2/04_lab_backtesting_framework.ipynb) | At least 3 walk-forward folds via `common/backtest.py` (or an equivalent), with the expanding-vs-rolling choice stated and justified for this series. | A single train/test split presented as if it were a backtest, or a fold boundary that leaks test-period data into training. |
+| 5 | Evaluation Metrics & Reporting | 10 | [Metrics cheatsheet](reference/metrics_cheatsheet.qmd) — used throughout every lab | MAE/RMSE reported alongside a scale-free metric (MASE or WAPE), with the choice of scale-free metric justified by the series' own shape. | Reporting only MAE/RMSE (not comparable across series or to a baseline), or reporting MAPE on a series with zeros. |
+| 6 | Probabilistic Forecasting & Prediction Intervals | 15 | [Probabilistic forecasting](day3/05_probabilistic_forecasting.qmd) · [Lab](day3/05_lab_probabilistic_forecasts.ipynb) | A real interval (conformal, Prophet, or sktime) with **both** `coverage()` and `interval_width()` reported against a nominal level. | Reporting coverage alone — an interval that's absurdly wide "covers" everything and that number alone hides it. |
+| 7 | Model Comparison & Documentation | 10 | [Model comparison](day3/06_model_comparison.qmd) · [Lab](day3/06_lab_model_comparison.ipynb) | A written recommendation that reasons from the decision axes (history length, interpretability, interval support, compute) — not just "model X had the lowest error." | Naming a "winner" by accuracy alone, with no discussion of *why* that model family fit this particular series' constraints. |
+
+## Before you submit
+
+- [ ] Your name (or your team's names) is in the README and the notebook
+      header.
+- [ ] The notebook runs top to bottom in a fresh Colab runtime with no
+      manual setup beyond the standard environment-setup cell
+      (`setup.qmd`).
+- [ ] Every cell has real, captured output saved in the file — not code
+      that "should work."
+- [ ] The backtest has at least 3 folds and no fold's training data
+      overlaps its own test window.
+- [ ] At least one scale-free metric (MASE or WAPE) is reported, and MAPE
+      is not used alone on a series with zeros.
+- [ ] A coverage number **and** a width number are both reported for your
+      interval forecast.
+- [ ] The model-comparison section is written in markdown cells in this
+      same notebook, and reasons from more than one axis.
+- [ ] The repository has a README, a `.gitignore`, meaningful commit
+      history, and states the training programme and cohort dates.
+- [ ] No API key or credential appears anywhere in the notebook or the
+      git history.
+
+Continue to: [Assessment](assessment.qmd) · [Setup](setup.qmd)

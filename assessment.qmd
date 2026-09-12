@@ -1,0 +1,22 @@
+---
+title: "Pre-Course Assessment"
+---
+
+Before Day 1, take a short knowledge check — multiple choice, about 10
+minutes, covering the fundamentals this course builds on (series
+structure, basic statistics, a little Python/pandas). It helps calibrate
+where the cohort is starting from so the pace can be set correctly.
+
+It is **not** graded and has no bearing on your capstone result.
+
+::: {.callout-note appearance="simple"}
+**Link goes live per cohort.** The trainer shares the Google Form link for
+your specific cohort at the start of Day 1 — there's no single standing
+link here, since a new cohort gets a fresh form.
+:::
+
+::: {.callout-note appearance="simple"}
+Answer honestly — "I don't know yet" is useful information here, not a
+wrong answer. The point is to find out what to spend more time on, not to
+score anyone.
+:::

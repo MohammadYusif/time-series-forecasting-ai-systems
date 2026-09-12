@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pandas numpy
+
+      - name: Regenerate the datasets and diff against what's committed
+        run: |
+          cd data
+          python generate_series.py
+          git diff --exit-code -- . || {
+            echo "::error::generate_series.py is deterministic (seeded) — a diff here means the committed CSVs are stale relative to the script. Re-run and commit the result.";
+            exit 1;
+          }
+
+      - name: Metrics unit tests
+        run: python -m pytest tests/ -q
+
+      - name: Every committed lab notebook has real executed output
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          bad = []
+          for day in ("day1", "day2", "day3"):
+              for nb_path in sorted(pathlib.Path(day).glob("*.ipynb")):
+                  nb = json.loads(nb_path.read_text(encoding="utf-8"))
+                  for i, cell in enumerate(nb["cells"]):
+                      if cell["cell_type"] != "code":
+                          continue
+                      if cell.get("execution_count") is None and not cell.get("outputs"):
+                          bad.append(f"{nb_path}: cell {i} was never executed")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("all lab notebooks carry executed output")
+          PY

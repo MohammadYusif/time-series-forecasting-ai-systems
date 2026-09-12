@@ -1,0 +1,278 @@
+---
+title: "Troubleshooting"
+---
+
+Common errors and misreadings, in the order you're likely to hit them
+across the three days. Each entry is Symptom → Cause → Fix.
+
+## Day 1 — structure and classical models
+
+### Reading ACF/PACF backwards — mixing up AR and MA order
+
+**Symptom:** you pick `p` and `q` for an ARMA model and the residuals are
+still autocorrelated, or the "obvious" order from the plots doesn't
+improve on a simpler model.
+
+**Cause:** the two plots indicate opposite things, and it's easy to
+memorize them backwards. The **ACF** (autocorrelation function) shows a
+gradual, geometric tail-off for an AR process but **cuts off sharply**
+after lag `q` for an MA(q) process. The **PACF** (partial autocorrelation)
+does the reverse: it **cuts off sharply** after lag `p` for an AR(p)
+process but tails off gradually for an MA process. Reading them the wrong
+way round (using ACF's cutoff to pick AR order, or PACF's cutoff to pick
+MA order) gives you a plausible-looking but wrong order every time.
+
+**Fix:** memorize the pairing by which plot goes with which letter — **P**ACF
+cuts off at **p** (AR order), **A**CF cuts off at **q** (MA order) — or just
+say it out loud as "PACF picks P, ACF picks Q." When both plots tail off
+gradually instead of cutting off cleanly, that's evidence for a mixed
+ARMA process, not a sign you're reading the wrong plot. See
+[day1/01_decomposition_and_autocorrelation.qmd](../day1/01_decomposition_and_autocorrelation.qmd)
+for worked examples on `data/retail_demand.csv`.
+
+### Misreading the ADF test's p-value direction
+
+**Symptom:** you get a low p-value from the Augmented Dickey-Fuller test
+and conclude the series is non-stationary and needs differencing — and
+then over-difference a series that was already fine.
+
+**Cause:** the ADF test's null hypothesis is "the series **has a unit
+root**" (i.e., is **non-stationary**) — the opposite of what most other
+statistical tests default to assuming. A **low** p-value (conventionally
+< 0.05) means you **reject** the null, which means the evidence points to
+the series **being stationary**. A **high** p-value means you fail to
+reject "non-stationary," so the series likely still needs differencing.
+This trips up almost everyone at least once, because the intuition from
+most other hypothesis tests ("low p-value = something is wrong / needs
+fixing") points the exact opposite direction here.
+
+**Fix:** read it as "low p-value → stationary → good, proceed" and "high
+p-value → non-stationary → difference and re-test." From `statsmodels`:
+
+```python
+from statsmodels.tsa.stattools import adfuller
+
+result = adfuller(y)
+p_value = result[1]
+# p_value < 0.05  ->  reject "has a unit root"  ->  series IS stationary
+```
+
+Always print (or comment) which conclusion the p-value implies right next
+to the call — it's cheap insurance against reading it backwards later
+when you're skimming your own notebook.
+
+### statsmodels warns "no frequency information was provided" (or silently uses the wrong seasonal period)
+
+**Symptom:** a `ValueWarning` about an unset frequency, or a SARIMAX
+model fits without complaint but its seasonal component looks wrong.
+
+**Cause:** `SARIMAX`/`ETS` in statsmodels infer seasonality from the
+index's frequency (or the `seasonal_order`/`seasonal_periods` you pass),
+not from actually inspecting the data's calendar pattern. A plain
+`RangeIndex`, a `DatetimeIndex` with gaps, or a `DatetimeIndex` that was
+never given an explicit `freq` all produce this warning — and if you
+also mis-specify the seasonal period (e.g. `seasonal_order=(...,12)` on a
+daily series that actually needs `7`), the model fits something, just not
+what you meant.
+
+**Fix:** set the index frequency explicitly before fitting, and match
+the seasonal period to the actual data cadence — `7` for daily-with-
+weekly-seasonality (`data/retail_demand.csv`, `data/workforce_demand.csv`),
+`12` for monthly-with-yearly-seasonality (`data/economic_indicator.csv`):
+
+```python
+df = df.set_index("date").asfreq("D")   # explicit daily frequency, gaps forward-filled/NaN
+```
+
+## Day 2 — feature engineering and backtesting
+
+### LightGBM recursive-forecast leakage — using a true future value as a lag feature
+
+**Symptom:** a multi-step forecast looks implausibly good in backtesting
+— often *better* than a well-tuned ARIMA — and then performs much worse
+once actually deployed.
+
+**Cause:** forecasting more than one step ahead with lag features
+(`lag_1`, `lag_7`, ...) means step 2's `lag_1` feature is step 1's
+*target*, which you don't actually know yet at prediction time. Building
+the feature matrix for the whole horizon up front from the real
+(held-out) series — instead of feeding each step's own prediction back in
+as the next step's lag — hands the model the true future disguised as a
+feature. This is the single most common correctness bug in this course's
+Day 2 labs, and it makes the model look far better than it is precisely
+because the "forecast" is partly made of real answers.
+
+**Fix:** implement genuine recursive (iterative) forecasting — predict
+step 1, append that *prediction* (not the true value) to the series, recompute
+lag features from the updated series, predict step 2, and so on:
+
+```python
+history = list(y_train)
+preds = []
+for step in range(horizon):
+    features = build_features(history)   # lag_1, lag_7, rolling_mean_28, ... from `history` as it stands NOW
+    y_hat = model.predict(features[-1:])[0]
+    preds.append(y_hat)
+    history.append(y_hat)                # <- the predicted value, never the true future value
+```
+
+Before trusting any multi-step LightGBM result, check the feature-building
+code for exactly this: does it ever read `y_true`/the original series past
+the point the model is supposed to know about? If yes, it's leaking. See
+[day2/03_feature_engineering.qmd](../day2/03_feature_engineering.qmd) and
+[day2/04_backtesting.qmd](../day2/04_backtesting.qmd).
+
+### A global scaler fit on the whole series, test region included
+
+**Symptom:** a scaled model's backtest scores look suspiciously strong,
+especially on later folds, and don't reproduce when the scaler is refit
+per-fold.
+
+**Cause:** calling `scaler.fit(y)` (or `fit_transform`) on the **entire**
+series before splitting into folds means the scaler's mean/std (or
+min/max) were computed using values from the test window — information
+the model shouldn't have at fit time for that fold. Each fold's forecast
+ends up implicitly informed by data from its own future.
+
+**Fix:** fit the scaler **inside** the per-fold loop, on `y_train` only,
+and apply that same fitted scaler to transform both `y_train` and the
+fold's test inputs — never call `.fit()` (or `fit_transform`) on data
+that includes the test window:
+
+```python
+for train_slice, test_slice in splits:
+    scaler = StandardScaler().fit(y[train_slice].reshape(-1, 1))   # train only
+    y_train_scaled = scaler.transform(y[train_slice].reshape(-1, 1))
+    y_test_scaled = scaler.transform(y[test_slice].reshape(-1, 1))  # transform, never fit
+```
+
+This is exactly the class of bug `common/backtest.py`'s `run_backtest` is
+built to make harder to write by accident — `fit_predict_fn` is called
+fresh per fold with only that fold's `y_train`, so a scaler built inside
+it naturally can't see the test window, as long as you don't reach
+outside that function to fit one globally first.
+
+## Day 3 — probabilistic forecasting and model comparison
+
+### Prophet requires columns named exactly `ds` and `y`
+
+**Symptom:** `KeyError: 'ds'` or a similarly opaque error the moment you
+call `Prophet().fit(df)`.
+
+**Cause:** Prophet's API is rigid about input column names — it looks for
+literal columns called `ds` (the datestamp) and `y` (the value), not
+`date`/`units_sold` or whatever the source CSV actually calls them.
+
+**Fix:** rename before fitting, every time:
+
+```python
+df_p = df.rename(columns={"date": "ds", "units_sold": "y"})[["ds", "y"]]
+m = Prophet()
+m.fit(df_p)
+```
+
+### Prophet's first call is slow — it's compiling and caching cmdstan
+
+**Symptom:** the very first `Prophet().fit(...)` in a fresh environment
+(a new Colab runtime, a freshly created virtualenv) takes noticeably
+longer than every call after it — sometimes tens of seconds where a
+comparable statsmodels fit takes milliseconds.
+
+**Cause:** Prophet's backend (`cmdstanpy`) compiles the underlying Stan
+model the first time it's needed, then caches the compiled binary.
+Nothing is wrong; it's a one-time cost per environment, not per call.
+
+**Fix:** nothing to fix — just don't assume the notebook has hung. If it's
+disruptive in a live demo, "warm up" Prophet with a throwaway fit on a
+tiny dummy series before the real one, or budget for it explicitly in
+timing comparisons (see
+[reference/tooling_guide.qmd](tooling_guide.qmd)'s "typical fit time" row)
+rather than reporting Prophet's cold-start time as its steady-state speed.
+
+### sktime API changes between versions
+
+**Symptom:** an example from this course (or from sktime's own docs)
+raises an `AttributeError`, a changed-signature `TypeError`, or a
+deprecation warning pointing at a renamed argument.
+
+**Cause:** sktime's forecaster API has genuinely changed shape across
+releases — argument names, return types (e.g. what `predict_interval`
+returns), and module paths for individual forecasters have all moved at
+least once. Code copied from an older sktime example, or from a version
+mismatch between what's installed and what an example assumed, is a
+common source of otherwise-mysterious errors.
+
+**Fix:** check the installed version before debugging the code itself —
+this course was built and verified against **sktime 1.1.0**:
+
+```python
+import sktime
+print(sktime.__version__)
+```
+
+If it doesn't match, either pin to the version the example was written
+against (`pip install sktime==1.1.0`) or check sktime's own changelog for
+what moved between versions before assuming the example code is wrong.
+
+### MASE raises `ValueError` on a perfectly flat training series
+
+**Symptom:** `ValueError: in-sample naive-seasonal MAE is 0 ... MASE is
+undefined; report MAE instead`, usually on an early backtest fold with a
+very short or unusually flat training window.
+
+**Cause:** MASE scales your forecast's error by the in-sample error of a
+seasonal-naive baseline computed on `y_train`. If that training window
+happens to be perfectly flat (or perfectly repeats its own seasonal
+cycle with zero noise), the naive baseline's own error is exactly 0 — the
+denominator of the ratio — so the scaled metric is mathematically
+undefined, not a bug in `common/metrics.py`. See
+[reference/metrics_cheatsheet.qmd](metrics_cheatsheet.qmd#scaled-mase)
+for the full explanation and the companion "`y_train` too short for
+`seasonal_period`" error.
+
+**Fix:** this is a signal, not a bug to route around — report MAE for
+that fold instead of forcing MASE where the baseline gives it nothing to
+scale against; don't add an epsilon to the denominator to silence it,
+since that would just fabricate a number instead of reporting one.
+
+## Setup and environment
+
+### Colab asks to restart the runtime after installing a package
+
+**Symptom:** after the first `_pip_install(...)` cell runs, Colab shows a
+"Restart runtime" prompt, or a package that was just installed still
+`ImportError`s in the very next cell.
+
+**Cause:** some packages replace a version of a library Colab's runtime
+had already imported before your first cell ran, and Python won't pick up
+the new version in an already-running process without a restart.
+
+**Fix:** click **Restart runtime** if Colab offers it, then re-run all
+cells from the top — this is a one-time cost per fresh runtime, not a
+sign the install failed. If no prompt appears but an import still fails
+right after installing it, restart manually (Runtime → Restart runtime)
+and re-run.
+
+### `fetch()` downloads a stale or wrong file
+
+**Symptom:** a notebook runs, but plots or numbers don't match what the
+paired `.qmd` lesson describes — or a `fetch("data/...")` call in a
+notebook you're actively editing keeps returning old content.
+
+**Cause:** `fetch()` (defined in every lab's setup cell — see
+[setup.qmd](../setup.qmd)) checks for a local copy in the current
+directory before downloading anything, so it will happily keep reusing a
+file it downloaded earlier in the session — including one downloaded
+before you or the course maintainers changed the source file on GitHub.
+
+**Fix:** delete the locally cached copy and re-run the cell so `fetch()`
+re-downloads it:
+
+```python
+import pathlib
+pathlib.Path("metrics.py").unlink(missing_ok=True)
+pathlib.Path("retail_demand.csv").unlink(missing_ok=True)
+```
+
+or simply factory-reset the runtime (Runtime → Disconnect and delete
+runtime in Colab) for a clean slate with nothing cached at all.

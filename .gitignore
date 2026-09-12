@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Secrets
+.env
+*.key
+
+# Quarto
+/_site/
+/.quarto/
+**/*.quarto_ipynb
+
+# Docker/Colab-sim scratch
+colab-sim/out/

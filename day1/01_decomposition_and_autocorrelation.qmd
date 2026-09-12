@@ -1,0 +1,230 @@
+---
+title: "Trend, Seasonality & Autocorrelation"
+---
+
+Before fitting any model, look at the series. Decomposition tells you what
+kind of structure is in there (a trend? more than one seasonal cycle? how
+much is left once you remove both?); ACF and PACF plots tell you how a
+value depends on its own recent past, which is what actually determines
+which classical model — and which order of that model — belongs on Day 1's
+second lesson. Skipping this step doesn't make the structure go away; it
+just means you find out about it from a bad forecast instead of from a
+plot.
+
+The running example throughout is `retail_demand.csv`, filtered to the
+Riyadh / Grocery series: 1,096 daily observations from 2023-01-01 to
+2025-12-31, mean daily demand ≈ 670 units, standard deviation ≈ 207.
+
+```python
+import pandas as pd
+
+df = pd.read_csv("data/retail_demand.csv", parse_dates=["date"])
+series = (
+    df[(df["region"] == "Riyadh") & (df["category"] == "Grocery")]
+    .set_index("date")["units_sold"]
+    .asfreq("D")
+)
+```
+
+## Decomposition: trend, seasonality, residual
+
+A time series is usually treated as a combination of three pieces:
+
+- **Trend** — the slow-moving, long-run direction. Riyadh/Grocery's trend
+  climbs over the three years — driven by the dataset's built-in ~6%/year
+  growth, but a decomposition doesn't know that in advance; it just
+  estimates whatever moves slower than the seasonal period.
+- **Seasonality** — a pattern that repeats at a fixed, known period. This
+  series has two: a 7-day weekly cycle (weekend lift) and a slower yearly
+  cycle, plus drifting holiday-style bumps that repeat every year but not
+  on a fixed calendar date (see the note on the `_hijri_like_holiday_bumps`
+  generator in `data/generate_series.py` — it's a deliberate stand-in for a
+  lunar-calendar holiday like Ramadan or Eid, which shifts about 11 days
+  earlier each Gregorian year).
+- **Residual** — whatever's left after removing both. If the model is
+  reasonable, this should look close to noise; leftover structure in the
+  residual is a sign the trend or seasonal component was mis-specified.
+
+### Additive vs. multiplicative
+
+The two ways to combine the pieces:
+
+$$y_t = T_t + S_t + R_t \qquad \text{(additive)}$$
+$$y_t = T_t \times S_t \times R_t \qquad \text{(multiplicative)}$$
+
+The choice matters because it's a claim about how the seasonal swing scales
+with the level. Additive says "weekends add about the same number of extra
+units regardless of the current level." Multiplicative says "weekends add
+about the same *percentage* on top of the current level" — so as the trend
+climbs, the absolute size of the weekend bump climbs with it.
+
+```python
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+add = seasonal_decompose(series, model="additive", period=7)
+mul = seasonal_decompose(series, model="multiplicative", period=7)
+```
+
+On Riyadh/Grocery, the multiplicative model is the better description: the
+weekly multiplier stays in a narrow band (roughly 0.92 to 1.35 across the
+seven weekday factors baked into the generator) across the whole three
+years, while the *absolute* size of the weekend lift grows as the series'
+level grows. You can see the same thing without decomposing anything: plot
+the series and check whether the size of the weekly wiggle visibly grows
+alongside the level, or stays roughly constant. If it grows, multiplicative
+(or a log-transform plus additive) is the right call; if it stays flat,
+additive is fine.
+
+### STL: a more robust decomposition
+
+`seasonal_decompose` uses simple moving averages, which is fast but not
+robust to outliers — a single promo-shock day can distort the trend
+estimate for weeks around it. **STL** (Seasonal-Trend decomposition using
+LOESS) replaces the moving average with local regression and adds a
+`robust` option that downweights outliers instead of being dragged by them
+— worth the switch on any real series that has occasional shocks, which
+`retail_demand.csv` deliberately does (the sporadic 2–4 day promo bursts).
+
+```python
+from statsmodels.tsa.seasonal import STL
+
+stl = STL(series, period=7, robust=True).fit()
+trend, seasonal, resid = stl.trend, stl.seasonal, stl.resid
+```
+
+On the Riyadh/Grocery series, STL's trend component ranges from about 467
+to about 1,364 units/day over the three years — noticeably more swing than
+the ~18% yearly-seasonality amplitude alone would suggest, because STL's
+"trend" is simply whatever varies more slowly than the 7-day period: it
+absorbs the yearly cycle's slow-moving part and multi-week clusters of
+promo activity along with the genuine multi-year growth. That's normal and
+worth knowing going in — STL's trend is not a purified structural trend,
+it's "everything below the seasonal frequency." The seasonal component
+itself ranges from about −195 to +418: notably asymmetric, which is exactly
+the multiplicative signature above — the positive (weekend) swings are
+larger in absolute terms because they land on higher-level periods more
+often than the negative swings do.
+
+::: {.callout-note}
+## Reading a decomposition plot
+`result.plot()` stacks four panels: the observed series, trend, seasonal,
+and residual, all on the same x-axis. The residual panel is where to look
+first — if it still has a visible pattern (a slow wave, a repeating shape),
+the trend or seasonal component didn't fully capture what's there, and it's
+worth trying the other decomposition mode or a different `period` before
+moving on.
+:::
+
+## Reading ACF and PACF
+
+The **autocorrelation function (ACF)** at lag $k$ is the correlation
+between $y_t$ and $y_{t-k}$. The **partial autocorrelation function
+(PACF)** at lag $k$ is that same correlation with the effect of the lags
+*in between* removed — the part of the relationship at lag $k$ that isn't
+just an echo of lags 1 through $k-1$. Read together, they're the classical
+way to reason about how many autoregressive (AR) or moving-average (MA)
+terms a series needs, which is exactly the p and q that Day 1's second
+lesson fits.
+
+```python
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+plot_acf(series, lags=28)
+plot_pacf(series, lags=28)
+```
+
+On the raw Riyadh/Grocery series, the ACF decays slowly and doesn't cross
+zero — 0.76 at lag 1, still 0.36 at lag 4, and a secondary bump back up to
+0.66 at lag 7 — a shape that's the fingerprint of *both* a trend (the slow
+overall decay: nothing this persistent is just short-run noise) and weekly
+seasonality (the bump exactly at multiples of 7). The PACF cuts off harder:
+0.76 at lag 1, then small and mixed-sign values, with the next real spike
+at lag 6–7 (0.39, 0.20) — the seasonal AR signature, not something you'd
+read as "AR(1) and nothing else" from the ACF's slow decay alone. This
+combination — slow ACF decay plus a PACF that's mostly quiet except at
+multiples of the seasonal period — is exactly the signal that a plain
+ARIMA won't be enough and a *seasonal* term (SARIMA's P, D, Q, s) is doing
+real work, which the next lesson picks up directly.
+
+Two lags in isolation rarely tell the whole story — it's the *shape* across
+the first 20–30 lags that matters: a slow, roughly linear decay usually
+means differencing is needed (see below); a sharp cutoff after lag $q$ in
+the ACF suggests an MA($q$) term; a sharp cutoff after lag $p$ in the PACF
+suggests an AR($p$) term; and a periodic bump at multiples of a period
+suggests seasonality at that period.
+
+## Stationarity and the Augmented Dickey-Fuller test
+
+Most classical models (ARIMA chief among them) assume the series is
+**stationary** — its mean, variance, and autocorrelation structure don't
+change over time. A series with a trend or a growing seasonal amplitude
+isn't stationary, so before an ARIMA order means anything, check.
+
+The **Augmented Dickey-Fuller (ADF) test** is the standard check: its null
+hypothesis is that the series *has* a unit root (is non-stationary); a
+small p-value lets you reject that and conclude the series looks
+stationary.
+
+```python
+from statsmodels.tsa.stattools import adfuller
+
+stat, pvalue, used_lag, nobs, crit_values, icbest = adfuller(series, autolag="AIC")
+```
+
+On the raw Riyadh/Grocery level, this comes back statistic = −3.87,
+p = 0.0023 — technically a rejection of the unit-root null at the 5% level,
+despite the series visibly trending upward over three years. This is a real
+trap, not a hypothetical one: `adfuller`'s default regression variant
+(`regression="c"`) only allows for a constant, not a deterministic trend, so
+a series with strong short-run mean reversion (here, the weekly cycle
+pulling the series back toward its recent average every few days) can pass
+the plain ADF test even while a slower trend is clearly present. Passing
+`regression="ct"` to test stationarity *around a trend* instead gives
+statistic = −3.87, p = 0.013 — still technically significant at 5%, but
+markedly less confident, and the honest takeaway either way is "there is
+real short-run structure here, but don't trust a marginal ADF result to
+mean the series needs no differencing." Always look at the decomposition
+and the ACF alongside the test, never the p-value alone.
+
+First-differencing settles it decisively. On $y_t - y_{t-1}$:
+
+```python
+diffed = series.diff().dropna()
+stat, pvalue, *_ = adfuller(diffed, autolag="AIC")
+```
+
+statistic = −9.85, p < 0.000001 — unambiguous. The ACF of the differenced
+series confirms what differencing was supposed to do: lag 1 drops to −0.02
+(the trend-driven slow decay is gone), but lags 7 and 14 are still 0.54 and
+0.50 — the weekly seasonality survives ordinary differencing untouched,
+because differencing at lag 1 only removes structure at lag 1's frequency.
+This is the concrete case for **seasonal differencing** ($y_t - y_{t-7}$,
+or both applied together) whenever a seasonal period is present, which is
+exactly what SARIMA's seasonal $D$ term does.
+
+## Differencing, concretely
+
+- **First-order differencing** ($d=1$): $y_t' = y_t - y_{t-1}$. Removes a
+  linear trend; apply it when the ACF decays slowly and the ADF test
+  (ideally the `regression="ct"` variant, or checked against a
+  decomposition) says the level isn't stationary.
+- **Seasonal differencing** ($D=1$ at period $s$): $y_t' = y_t - y_{t-s}$.
+  Removes a repeating seasonal pattern at period $s$; apply it when the ACF
+  has a persistent bump at multiples of $s$ that first-order differencing
+  alone doesn't remove — exactly what happened above at $s=7$.
+- Both can be combined, and usually are for a series with trend and
+  seasonality together: difference once at lag 1, then once more at lag
+  $s$. Over-differencing is a real cost, not just an inefficiency — it
+  introduces artificial negative autocorrelation into the residual — so
+  difference only as much as the ACF/ADF evidence actually supports, and
+  re-check the ACF after each differencing step rather than differencing
+  repeatedly "to be safe."
+
+With the series decomposed, its autocorrelation structure read, and the
+right amount of differencing established, the next lesson uses exactly this
+diagnosis — $d=1$, seasonal period $s=7$, a PACF that points at a seasonal
+AR term — to choose and fit ARIMA, SARIMA, and the exponential smoothing
+family, and to compare the candidates formally with AIC/BIC and the
+Ljung-Box test.
+
+Continue to the lab: [01_lab_decomposition.ipynb](01_lab_decomposition.ipynb)

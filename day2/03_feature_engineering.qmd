@@ -1,0 +1,320 @@
+---
+title: "Feature Engineering for Tree-Based Forecasting"
+format: html
+---
+
+Day 1 fit ARIMA and ETS models. Both carry time inside the model itself: an
+AR(7) term literally reads `y[t-1] .. y[t-7]` on every step, and
+Holt-Winters keeps a running level, trend, and seasonal state that updates
+recursively as it moves forward. Neither model needs to be told which day of
+the week it is — the recursion *is* the model's memory of time.
+
+A gradient-boosted tree has none of that. LightGBM sees a table of rows and
+columns. It does not know that row 812 came the day after row 811, and it
+has no internal state that carries from one row to the next — every row is
+scored independently, using only the values sitting in that row's own
+columns. If "yesterday's demand" matters to the forecast — and for
+`data/retail_demand.csv` it very much does — it has to exist as a column,
+computed by you, before the model ever sees the data.
+
+That is the whole job of this page: turning a `date` column and a raw
+target into a feature table a tree model can actually use.
+
+## No implicit recurrence — a direct comparison
+
+| Model family | Where "yesterday" lives |
+|---|---|
+| ARIMA(p, d, q) | Explicitly in the AR terms (`φ₁y[t-1] + ... + φₚy[t-p]`) and the MA terms (past forecast errors) — built into the model's equation |
+| ETS / Holt-Winters | In the level, trend, and seasonal *state* the model updates and carries forward at every step |
+| A recurrent network | In a hidden-state vector passed from one time step to the next |
+| A gradient-boosted tree (LightGBM) | Nowhere — unless a column in that row's feature vector encodes it |
+
+This isn't a limitation to work around apologetically. Trees trade away
+built-in recurrence for something classical models don't have: the ability
+to split on *any* signal you hand them, in any combination, without
+assuming linearity or a fixed functional form. The trade is worth it, as
+long as you actually hand them the signal.
+
+## The running example
+
+Every feature below is built on `data/retail_demand.csv`, filtered to the
+Riyadh / Grocery series — the same convention Day 1 uses, so the numbers
+here are the numbers you already have intuition for:
+
+```python
+import pandas as pd
+
+df = pd.read_csv(fetch("data/retail_demand.csv"), parse_dates=["date"])
+series = (
+    df[(df["region"] == "Riyadh") & (df["category"] == "Grocery")]
+    .sort_values("date")
+    .reset_index(drop=True)
+)
+```
+
+`series` is 1,096 daily rows, 2023-01-01 through 2025-12-31, one column
+(`units_sold`) worth turning into a dozen.
+
+## Lag features
+
+The simplest and most important feature family: what was the value some
+fixed number of steps ago.
+
+```python
+series["lag_1"] = series["units_sold"].shift(1)
+series["lag_7"] = series["units_sold"].shift(7)
+```
+
+`lag_1` gives the model yesterday's value — useful because daily demand is
+autocorrelated (Day 1's ACF/PACF reading told you exactly how much).
+`lag_7` gives it the same weekday one week back, which matters here because
+the series has strong weekly seasonality: comparing today to *last Tuesday*
+is a much more informative baseline than comparing it to yesterday when
+Tuesdays and Saturdays sell at different levels.
+
+`shift(7)` needs 7 rows of history before it produces a value, `shift(1)`
+needs 1 — both leave leading `NaN`s that get dropped once every feature is
+built (see [Putting it together](#putting-it-together) below).
+
+## Rolling-window statistics
+
+A single lagged value is noisy — it's one day. A rolling statistic
+summarizes a *window* of recent days, which is more stable and captures
+level and volatility separately:
+
+```python
+prior = series["units_sold"].shift(1)  # never the current row — see below
+
+series["roll_mean_7"]  = prior.rolling(7).mean()
+series["roll_std_7"]   = prior.rolling(7).std()
+series["roll_mean_28"] = prior.rolling(28).mean()
+series["roll_min_28"]  = prior.rolling(28).min()
+series["roll_max_28"]  = prior.rolling(28).max()
+```
+
+The `.shift(1)` before `.rolling(...)` is not a stylistic choice — it's the
+difference between a legitimate feature and a broken one. At the moment
+you'd actually need this feature (forecasting day *t*), you do not know
+`units_sold` on day *t* yet; that's the thing you're trying to predict. A
+plain `series["units_sold"].rolling(7).mean()` includes day *t*'s own value
+in day *t*'s feature — accurate in a backtest that already has the answer
+column sitting right there in the dataframe, meaningless in production
+where day *t* hasn't happened. Shifting first ensures every rolling window
+only ever looks at days strictly before the one being featurized.
+
+`roll_mean_7` and `roll_mean_28` give the model two views of recent level —
+a fast one and a slow one; `roll_std_7` gives it a sense of how volatile the
+last week has been (a promo shock inflates it); `roll_min_28`/`roll_max_28`
+bound the recent range. A tree can combine these (e.g. "is today's `lag_1`
+close to `roll_max_28`?") in ways no single column expresses on its own.
+
+Real values from the running series, rows 25–32 (late January 2023):
+
+| date | units_sold | lag_1 | lag_7 | roll_mean_7 | roll_std_7 | roll_mean_28 |
+|---|--:|--:|--:|--:|--:|--:|
+| 2023-01-26 | 635 | 577 | 586 | 675.4 | 139.9 | NaN |
+| 2023-01-27 | 589 | 635 | 626 | 682.4 | 135.9 | NaN |
+| 2023-01-28 | 792 | 589 | 949 | 677.1 | 139.1 | NaN |
+| 2023-01-29 | 806 | 792 | 779 | 654.7 |  93.0 | 630.6 |
+| 2023-01-30 | 607 | 806 | 637 | 658.6 |  99.3 | 633.4 |
+| 2023-01-31 | 607 | 607 | 574 | 654.3 | 101.1 | 636.0 |
+| 2023-02-01 | 492 | 607 | 577 | 659.0 |  97.4 | 639.3 |
+| 2023-02-02 | 626 | 492 | 635 | 646.9 | 113.3 | 637.0 |
+
+Notice `roll_mean_28` is still `NaN` on 2023-01-26 through 2023-01-28 — with
+`.shift(1)` in front of it, a 28-day window needs 29 prior rows to fill, and
+the series only starts on 2023-01-01. It first has a value on row index 28
+(2023-01-29 in the table above).
+
+## Calendar features
+
+```python
+series["dow"]   = series["date"].dt.dayofweek     # 0=Mon .. 6=Sun
+series["month"] = series["date"].dt.month          # 1..12
+
+doy = series["date"].dt.dayofyear
+series["doy_sin"] = np.sin(2 * np.pi * doy / 365.25)
+series["doy_cos"] = np.cos(2 * np.pi * doy / 365.25)
+```
+
+Plain integer `dow`/`month` are already useful to a tree exactly as they
+are — a tree splits on thresholds and category-like groupings, it doesn't
+assume `6 > 0` means "more of something" the way a linear model would, so
+handing it raw `dow` lets it learn an arbitrary per-weekday effect (which is
+exactly what this series has: Saturday and Sunday sell noticeably more than
+midweek, roughly 1.35x and 1.25x the Grocery weekday multiplier baked into
+`data/generate_series.py`).
+
+`doy` alone is where integer encoding breaks down, because the calendar
+*wraps* and the integer doesn't. December 31 (`doy=365`) and January 1
+(`doy=1`) are adjacent days, but as raw numbers they're 364 apart — a tree
+would need to learn that specific discontinuity from data, which asks a lot
+for one boundary crossed once a year. The sine/cosine pair maps every day
+onto a point on a circle, so adjacent calendar days stay numerically close
+even across the year boundary:
+
+| day of year | sin | cos |
+|---|--:|--:|
+| 1 (Jan 1) | 0.0172 | 0.9999 |
+| 2 (Jan 2) | 0.0344 | 0.9994 |
+| 364 (Dec 30) | -0.0215 | 0.9998 |
+| 365 (Dec 31) | -0.0043 | 1.0000 |
+
+`(sin, cos)` for day 365 and day 1 sit almost on top of each other — the
+representation hands the model the wraparound directly instead of asking it
+to infer one from a handful of examples.
+
+## Target transforms — `log1p`
+
+`data/generate_series.py` builds `retail_demand.csv` as a **product**:
+
+```python
+demand = level * trend * weekly * yearly * holiday * (1 + promo) * noise
+```
+
+— trend, weekly seasonality, yearly seasonality, and noise all multiply
+together rather than add. That has a concrete consequence: the *absolute*
+size of the noise grows with the level. Grocery's noise is `~5%` of
+whatever the current level is (`noise_sigma["Grocery"] = 0.05` in the
+generator), so a low-trend early-2023 day and a high-trend late-2025 day
+have very different absolute noise even though the *proportional* noise is
+identical. A squared-error loss (what LightGBM's regression objective
+minimizes by default) implicitly assumes roughly constant-variance errors —
+feed it a series whose variance grows with its level and it will spend
+disproportionate effort fitting the high-volume days at the expense of the
+low-volume ones.
+
+`log1p` (`log(1 + x)`) turns the product into a sum — `log(a * b) = log(a) +
+log(b)` — and with it, proportional noise into roughly constant additive
+noise on the log scale:
+
+```python
+series["log1p_units"] = np.log1p(series["units_sold"])
+```
+
+| units_sold | log1p_units |
+|--:|--:|
+| 635 | 6.4552 |
+| 589 | 6.3801 |
+| 792 | 6.6758 |
+| 806 | 6.6933 |
+| 607 | 6.4102 |
+| 492 | 6.2005 |
+
+The `+1` inside `log1p` (versus a bare `log`) matters for any series that
+can legitimately hit zero — `log(0)` is undefined, `log1p(0) = 0` is fine.
+It buys you safety, not a fix: `data/intermittent_demand.csv` is ~95% zero
+rows, and `log1p` of a pile of zeros is still a pile of zeros — a target
+transform doesn't solve sparse-demand forecasting (that needs a different
+approach entirely, covered in [Day 3's model-comparison
+page](../day3/06_model_comparison.qmd)).
+
+If you train on `log1p_units`, remember to invert before scoring —
+`common/metrics.py`'s functions expect real units, not log units:
+
+```python
+predictions_units = np.expm1(model.predict(X))  # inverse of log1p
+```
+
+## Multiple series in one file — group before you shift
+
+`retail_demand.csv` is long-format: 6 series (3 regions × 2 categories)
+stacked in one table. Every `.shift()` and `.rolling()` above was written
+against `series`, which was already filtered down to one region/category
+pair — deliberately, because doing it on the full, unfiltered dataframe is
+a real bug that produces no error and a column full of nonsense.
+
+Sort the whole file by date only and shift naively:
+
+```python
+by_date = df.sort_values(["date", "region", "category"]).reset_index(drop=True)
+by_date["naive_lag_1"] = by_date["units_sold"].shift(1)
+```
+
+```
+        date  region     category  units_sold  naive_lag_1
+2023-01-01  Dammam  Electronics       155.0          NaN
+2023-01-01  Dammam      Grocery       412.0        155.0
+2023-01-01  Jeddah  Electronics       167.0        412.0
+2023-01-01  Jeddah      Grocery       545.0        167.0
+2023-01-01  Riyadh  Electronics       208.0        545.0
+2023-01-01  Riyadh      Grocery       728.0        208.0
+2023-01-02  Dammam  Electronics        97.0        728.0
+```
+
+Every `naive_lag_1` value here is wrong — Jeddah-Grocery's "yesterday" is
+Jeddah-Electronics' *today*, from a completely different series. The fix is
+to sort by series first, then group before shifting:
+
+```python
+df_sorted = df.sort_values(["region", "category", "date"]).reset_index(drop=True)
+df_sorted["lag_1"] = (
+    df_sorted.groupby(["region", "category"])["units_sold"].shift(1)
+)
+```
+
+This correctly puts a `NaN` — not a leaked value from the previous series —
+at the seam between two series:
+
+```
+       date  region     category  units_sold  lag_1
+2025-12-30  Riyadh      Grocery       553.0    605.0
+2025-12-31  Riyadh      Grocery       575.0    553.0   <- last Grocery row
+2023-01-01  Riyadh  Electronics       208.0      NaN   <- first Electronics row, correctly NaN
+2023-01-02  Riyadh  Electronics        93.0    208.0
+```
+
+The same `groupby([...])` has to wrap every `.shift()` and `.rolling()` call
+in this page once you're building features across more than one series —
+`common/backtest.py`'s functions all operate on a single 1-D array for
+exactly this reason: they leave the "which series" question to you, upstream
+of the split.
+
+## Putting it together {#putting-it-together}
+
+```python
+feature_cols = [
+    "lag_1", "lag_7",
+    "roll_mean_7", "roll_std_7", "roll_mean_28", "roll_min_28", "roll_max_28",
+    "dow", "month", "doy_sin", "doy_cos",
+]
+
+featured = series.dropna(subset=feature_cols).reset_index(drop=True)
+X = featured[feature_cols]
+y = featured["log1p_units"]  # or featured["units_sold"] if skipping the transform
+```
+
+`dropna` here is doing real work: `roll_mean_28` is the longest-memory
+feature (29 rows including the shift), so the first 29 rows of every series
+have no valid feature row and are correctly excluded from training — not
+patched with a fabricated value.
+
+## Foreshadowing: the leakage that's invisible in the code
+
+Every feature above was built to respect one rule: a feature for day *t*
+only uses data from strictly before day *t*. That rule is easy to state and
+easy to break by accident, especially once forecasting moves from
+"predict tomorrow" to "predict the next 7 days."
+
+Here's the trap. Say you're forecasting 7 days ahead with `lag_1` as a
+feature. Day *t+1*'s forecast can use the real `lag_1` (day *t*'s actual
+value — you have it). But day *t+2*'s forecast needs `lag_1` = day *t+1*'s
+value, and you don't have day *t+1*'s *actual* value yet — only your
+model's prediction for it. The correct approach is **recursive**: predict
+day *t+1*, feed that prediction back in as `lag_1` for day *t+2*, predict
+that, feed it back in for day *t+3*, and so on. It's tempting — and much
+easier to code — to instead pull `lag_1` for every day in the horizon
+straight from the historical dataframe you already have sitting in memory
+during a backtest. That dataframe contains the *true* future values, so
+day *t+2*'s row gets fed day *t+1*'s **actual** outcome instead of a
+prediction of it.
+
+Nothing about this shows up as an error, a warning, or even unusual-looking
+code — `df.loc[t+1, "lag_1"]` is a completely ordinary line. The only sign
+is a backtest score that looks implausibly good, because the model was
+quietly handed part of the answer. This exact failure mode — and how to
+build a walk-forward loop where it can't happen by construction — is the
+whole subject of the next page.
+
+Continue to the lab:
+[03_lab_lightgbm_forecast.ipynb](03_lab_lightgbm_forecast.ipynb)

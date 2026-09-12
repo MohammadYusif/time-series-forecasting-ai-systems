@@ -1,0 +1,106 @@
+---
+title: "Setup"
+---
+
+There are two ways to work through this course: run labs in Colab (do
+this — it's the default and needs nothing installed), or clone the repo
+and run everything locally (optional, mainly useful if you want to run
+the test suite or regenerate the datasets yourself).
+
+## Option A — Colab (recommended)
+
+Open any lab notebook's Colab badge from the sidebar, or go straight to
+one, for example
+[day1/01_lab_decomposition.ipynb](day1/01_lab_decomposition.ipynb). Run
+the first cell and stop reading this page — that's the whole setup.
+
+Every lab notebook's first code cell is the same shape:
+
+```python
+import subprocess, sys
+
+def _pip_install(*pkgs):
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *pkgs], check=True)
+
+_pip_install("statsmodels", "matplotlib")  # this lab's actual package list
+
+import pathlib
+import urllib.request
+
+REPO = "MohammadYusif/time-series-forecasting-ai-systems"
+BRANCH = "main"
+
+def fetch(rel_path: str) -> str:
+    ...
+```
+
+That `fetch()` helper is doing the real work: it looks for the file in a
+local repo checkout first, and if it isn't there — which is exactly the
+situation on a fresh Colab runtime, where nothing is cloned — it downloads
+it straight from this repository's `raw.githubusercontent.com` URL
+instead. The same notebook cell runs unmodified whether you opened it from
+a clone on your laptop or clicked "Open in Colab" with nothing else set
+up. Datasets (`data/retail_demand.csv` and friends) are fetched the same
+way.
+
+Nothing needs installing ahead of time and no API key or account is
+involved anywhere in this course — every package the labs use
+(statsmodels, Prophet, sktime, LightGBM, pandas, ...) is free, open
+source, and installed by that first cell. If a package happens to already
+be present in the runtime, `pip install` just confirms it and moves on.
+
+## Option B — run locally
+
+Useful if you want to poke at the shared utility code, run the test
+suite, or regenerate the datasets — not required to work through the
+labs, which are self-contained per Option A.
+
+```bash
+git clone https://github.com/MohammadYusif/time-series-forecasting-ai-systems.git
+cd time-series-forecasting-ai-systems
+pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt` is deliberately small — `pytest`, `pandas`,
+`numpy` — because it's for developing against the repo, not for running
+the labs. Each lab notebook installs its own forecasting libraries
+(statsmodels, Prophet, sktime, LightGBM, ...) in its own first cell by
+design, so that notebook stays runnable standalone in Colab with nothing
+pre-installed. Don't add those libraries to this file.
+
+**Run the test suite** — this is what actually exercises
+`common/metrics.py` and `common/backtest.py`, the small shared utility
+module every lab imports (accuracy metrics like WAPE and MASE, and the
+walk-forward split helpers used throughout Day 2 and Day 3):
+
+```bash
+python -m pytest tests/
+```
+
+**Confirm the datasets are reproducible.** `data/generate_series.py` is
+seeded and deterministic — regenerating should produce byte-identical
+files, so this should show a clean working tree:
+
+```bash
+python data/generate_series.py
+git status   # expect: no changes
+```
+
+## Verified against a fresh runtime, not just "it worked here"
+
+A notebook that runs on the machine that wrote it proves less than it
+looks like it proves — anything already installed there hides a missing
+dependency. Every lab notebook in this course was additionally verified
+end-to-end inside `colab-sim/`: a Docker container with **no**
+data-science packages preinstalled, standing in for a Colab runtime with
+nothing cloned and nothing cached. If a lab runs clean in that container,
+its `_pip_install` cell is doing all the work it claims to, and the
+notebook is safe to open cold. See
+[`colab-sim/README.md`](https://github.com/MohammadYusif/time-series-forecasting-ai-systems/blob/main/colab-sim/README.md)
+for how to run that check yourself.
+
+## Troubleshooting
+
+Hit a Colab-specific error (a runtime restart prompt after installing a
+package, a stale cached version, a download that failed)? See
+[Troubleshooting](reference/troubleshooting.qmd).

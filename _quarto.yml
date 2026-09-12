@@ -1,0 +1,111 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - "*.qmd"
+    - "day1/*.qmd"
+    - "day1/*.ipynb"
+    - "day2/*.qmd"
+    - "day2/*.ipynb"
+    - "day3/*.qmd"
+    - "day3/*.ipynb"
+    - "reference/*.qmd"
+    - "!data/"
+    - "!common/"
+    - "!tests/"
+    - "!colab-sim/"
+  preview:
+    port: 4721
+
+website:
+  title: "Time Series Forecasting for AI Systems"
+  description: "A three-day SDAIA Academy capstone course on forecasting — classical models, gradient-boosted learners, backtesting, and uncertainty."
+  site-url: https://mohammadyusif.github.io/time-series-forecasting-ai-systems/
+  repo-url: https://github.com/MohammadYusif/time-series-forecasting-ai-systems
+  page-navigation: true
+  back-to-top-navigation: true
+  reader-mode: true
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: setup.qmd
+        text: Setup
+      - href: capstone.qmd
+        text: Capstone
+      - href: assessment.qmd
+        text: Assessment
+    right:
+      - icon: github
+        href: https://github.com/MohammadYusif/time-series-forecasting-ai-systems
+        aria-label: GitHub
+
+  sidebar:
+    style: docked
+    collapse-level: 1
+    contents:
+      - index.qmd
+      - setup.qmd
+      - section: "Day 1 — Structure & Classical Models"
+        contents:
+          - day1/00_intro.qmd
+          - day1/01_decomposition_and_autocorrelation.qmd
+          - day1/01_lab_decomposition.ipynb
+          - day1/02_classical_models.qmd
+          - day1/02_lab_arima_ets.ipynb
+      - section: "Day 2 — Machine-Learned Forecasting & Backtesting"
+        contents:
+          - day2/03_feature_engineering.qmd
+          - day2/03_lab_lightgbm_forecast.ipynb
+          - day2/04_backtesting.qmd
+          - day2/04_lab_backtesting_framework.ipynb
+      - section: "Day 3 — Uncertainty, Comparison & Capstone"
+        contents:
+          - day3/05_probabilistic_forecasting.qmd
+          - day3/05_lab_probabilistic_forecasts.ipynb
+          - day3/06_model_comparison.qmd
+          - day3/06_lab_model_comparison.ipynb
+      - section: "Capstone"
+        contents:
+          - capstone.qmd
+          - assessment.qmd
+      - section: "Reference"
+        contents:
+          - reference/metrics_cheatsheet.qmd
+          - reference/tooling_guide.qmd
+          - reference/troubleshooting.qmd
+
+  page-footer:
+    left: "السلاسل الزمنية والتنبؤ · Time Series Forecasting for AI Systems · SDAIA Academy"
+    right:
+      - icon: github
+        href: https://github.com/MohammadYusif/time-series-forecasting-ai-systems
+        text: Repository
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "On this page"
+    anchor-sections: true
+    smooth-scroll: true
+    code-copy: true
+    code-overflow: wrap
+    code-line-numbers: false
+    respect-user-color-scheme: true
+    theme:
+      light: cosmo
+      dark: darkly
+    mermaid:
+      theme: neutral
+
+# The lab notebooks are committed WITH their executed outputs (produced by
+# running them against the CSVs in data/, verified in a clean Docker
+# container standing in for a fresh Colab runtime — see colab-sim/). Quarto
+# renders those saved outputs; it never re-executes anything, so the site
+# builds in CI with no dependency install and no compute.
+execute:
+  enabled: false
+
+number-depth: 1
+lightbox: auto

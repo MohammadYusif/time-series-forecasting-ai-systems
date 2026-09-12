@@ -1,0 +1,224 @@
+---
+title: "Classical Forecasting Models"
+---
+
+The previous lesson diagnosed the Riyadh/Grocery series: it needs
+first-order differencing ($d=1$), it has weekly seasonality ($s=7$) that
+survives first differencing and needs its own seasonal term, and its PACF
+points at a seasonal AR component. This lesson fits the two classical model
+families built for exactly that kind of structure — ARIMA/SARIMA and
+exponential smoothing — and covers how to choose between candidates
+(AIC/BIC) and check whether the winner actually captured what it needed to
+(the Ljung-Box test on its residuals).
+
+Every model below is fit on the same setup: the last 28 days of
+Riyadh/Grocery held out as a test set, everything before that as training
+data.
+
+```python
+train, test = series.iloc[:-28], series.iloc[-28:]
+```
+
+## ARIMA and SARIMA
+
+**ARIMA(p, d, q)** combines three ideas:
+
+- **AR(p)** — the forecast depends on its own last $p$ values.
+- **I(d)** — the series is differenced $d$ times before fitting (Day 1's
+  first lesson: $d=1$ removes a linear trend).
+- **MA(q)** — the forecast depends on the last $q$ forecast *errors*, not
+  raw values — letting the model correct for how wrong it was recently.
+
+```python
+from statsmodels.tsa.arima.model import ARIMA
+
+model = ARIMA(train, order=(2, 1, 2)).fit()
+```
+
+**SARIMA** extends this with a second, seasonal set of terms —
+$(P, D, Q, s)$ — that are the same three ideas (AR, differencing, MA) but
+applied at multiples of the seasonal period $s$ instead of at lag 1:
+
+```python
+model = ARIMA(
+    train,
+    order=(1, 1, 1),           # non-seasonal p, d, q
+    seasonal_order=(1, 1, 1, 7),  # seasonal P, D, Q, s
+).fit()
+```
+
+Concretely, `seasonal_order=(1, 1, 1, 7)` means: one seasonal AR term (this
+week's value relates to last week's, i.e. lag 7), one seasonal difference
+(subtract $y_{t-7}$ once), and one seasonal MA term (correct using last
+week's forecast error) — exactly the seasonal differencing the previous
+lesson showed was still needed after plain first-differencing.
+
+On Riyadh/Grocery's 28-day holdout, this matters in practice, not just in
+theory: SARIMA(1,1,1)(1,1,1,7) gets a mean absolute error of **61.3
+units/day**; a non-seasonal ARIMA(2,1,2) fit on the same training data gets
+**83.9** — 37% worse — because it has no way to represent the weekly cycle
+at all. Whenever the previous lesson's ACF/PACF diagnosis shows a periodic
+bump at multiples of some period $s$, that's not optional structure to
+capture later; leaving it out costs real accuracy.
+
+## The exponential smoothing family
+
+Exponential smoothing takes a different approach: instead of modeling
+autocorrelation in differenced data, it maintains a small set of *state*
+components (level, trend, seasonal) and updates each one as a weighted
+average of its previous estimate and the newest observation. The family
+builds up in three steps:
+
+**Simple Exponential Smoothing (SES)** — one state, the level. No trend, no
+seasonality. Appropriate only for a genuinely flat series with no
+persistent pattern to extrapolate.
+
+```python
+from statsmodels.tsa.holtwinters import SimpleExpSmoothing
+
+ses = SimpleExpSmoothing(train, initialization_method="estimated").fit()
+```
+
+**Holt's linear trend method** — adds a second state for the trend, so the
+forecast extrapolates a slope instead of a flat line.
+
+```python
+from statsmodels.tsa.holtwinters import Holt
+
+holt = Holt(train, initialization_method="estimated").fit()
+```
+
+**Holt-Winters (ETS)** — adds a third state for seasonality, in either
+additive or multiplicative form (same distinction as Day 1's decomposition
+lesson, now baked into the forecasting model itself):
+
+```python
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+hw_additive = ExponentialSmoothing(
+    train, trend="add", seasonal="add", seasonal_periods=7,
+    initialization_method="estimated",
+).fit()
+
+hw_multiplicative = ExponentialSmoothing(
+    train, trend="add", seasonal="mul", seasonal_periods=7,
+    initialization_method="estimated",
+).fit()
+```
+
+On the same 28-day Riyadh/Grocery holdout, the jump from SES to
+Holt-Winters is dramatic, and it tracks exactly what each step adds:
+
+| Model | What it captures | Holdout MAE |
+|---|---|---|
+| SES | Level only | 116.0 |
+| Holt | Level + trend | 116.9 |
+| Holt-Winters (additive) | Level + trend + seasonality | **45.1** |
+| Holt-Winters (multiplicative) | Level + trend + seasonality (scaled) | 49.5 |
+
+Adding a trend term alone (SES → Holt) does essentially nothing for this
+series — barely moves the error, and if anything nudges it slightly worse,
+because extrapolating a locally-estimated slope without accounting for the
+weekly cycle just as easily overshoots as helps. Adding seasonality is what
+actually matters, cutting the error by more than half. And on this
+particular holdout window, additive edges out multiplicative on raw
+accuracy, even though — as the next section shows — multiplicative fits the
+training data itself very slightly better by AIC. Those two facts are not
+a contradiction; they're a reason to look at both, covered next.
+
+## Model selection: AIC and BIC
+
+AIC (Akaike Information Criterion) and BIC (Bayesian Information Criterion)
+both score a fitted model on log-likelihood, penalized for the number of
+parameters — BIC penalizes complexity more heavily. Lower is better for
+both. `statsmodels` reports both on every fitted result:
+
+```python
+model.aic, model.bic
+```
+
+Fit five non-seasonal ARIMA candidates on the same $d=1$ differenced
+Riyadh/Grocery training data:
+
+| Order | AIC | BIC |
+|---|---|---|
+| ARIMA(1,1,0) | 13,654.7 | 13,664.7 |
+| ARIMA(0,1,1) | 13,654.2 | 13,664.2 |
+| ARIMA(1,1,1) | 13,493.5 | 13,508.4 |
+| ARIMA(3,1,1) | 13,436.3 | 13,461.2 |
+| **ARIMA(2,1,2)** | **13,373.3** | **13,398.2** |
+
+Both criteria agree here: ARIMA(2,1,2) wins outright among these five.
+That agreement is itself informative — when AIC and BIC pick different
+models, it usually means the extra parameters the larger model adds are
+buying a real but marginal improvement, and BIC's heavier penalty is
+telling you it's not worth the added complexity.
+
+::: {.callout-warning}
+## AIC/BIC only compare models fit on the *same* differenced data
+This is the trap to avoid: the SARIMA(1,1,1)(1,1,1,7) model above reports
+AIC = 12,741.7 — lower than every non-seasonal ARIMA candidate — but that
+comparison isn't valid on its own. Seasonal differencing ($D=1$ at $s=7$)
+drops 7 additional observations relative to $D=0$, which changes the
+likelihood's effective sample size; comparing AIC across different
+differencing orders (different $d$ or $D$) is comparing numbers computed on
+different amounts of data. AIC and BIC are only safe to compare directly
+*within* a fixed differencing order — which is exactly why the table above
+holds $d=1, D=0$ constant across all five candidates.
+
+The exponential smoothing models make the same point even more starkly:
+Holt-Winters additive reports AIC = 9,820.9, more than 3,000 points lower
+than any ARIMA candidate above — not because it's a dramatically better
+model, but because ETS is fit on the undifferenced series with a different
+likelihood normalization entirely. Comparing ETS's AIC to ARIMA's AIC is
+comparing two different scales, full stop.
+
+**The way around this:** use AIC/BIC to choose an order *within* one model
+family (as above), then use **out-of-sample holdout error** — MAE, RMSE, or
+one of the other metrics in `common/metrics.py` — to compare *across*
+families. That's exactly how this lesson picked SARIMA over plain ARIMA,
+and Holt-Winters over SES/Holt: by holdout MAE, not by AIC.
+:::
+
+## Residual diagnostics: the Ljung-Box test
+
+A well-specified model should leave residuals that look like noise — no
+leftover autocorrelation. The **Ljung-Box test** checks exactly that: its
+null hypothesis is that the residuals are independently distributed (no
+autocorrelation up to the tested lag); a small p-value means there's still
+structure the model failed to capture.
+
+```python
+from statsmodels.stats.diagnostic import acorr_ljungbox
+
+acorr_ljungbox(model.resid, lags=[7, 14, 21], return_df=True)
+```
+
+Run against the three models compared above:
+
+| Model | Ljung-Box stat (lag 7) | p-value (lag 7) | Verdict |
+|---|---|---|---|
+| ARIMA(2,1,2), no seasonal term | 189.9 | 1.6 × 10⁻³⁷ | Fails badly — the weekly cycle is sitting untouched in the residuals |
+| SARIMA(1,1,1)(1,1,1,7) | 18.6 | 0.0094 | Still technically fails at 5% — but far less severely |
+| Holt-Winters (additive) | 48.5 | 2.8 × 10⁻⁸ | Fails |
+
+Two honest results worth sitting with, not smoothing over:
+
+1. **SARIMA reduced the residual autocorrelation by an order of magnitude
+   but did not eliminate it.** A p-value of 0.0094 is still, technically,
+   a rejection of "no leftover structure" at the conventional 5% threshold.
+   In practice this usually means the seasonal order (P, D, Q) could be
+   pushed further — more seasonal AR or MA terms — or that some structure
+   (like the drifting holiday bumps from Day 1's decomposition lesson)
+   simply isn't linear-model-shaped and needs a feature-based approach,
+   which is exactly where Day 2's machine-learned forecasting picks up.
+2. **Holt-Winters had the best holdout accuracy of every model tried on
+   this series, and it still fails Ljung-Box.** Passing a residual
+   diagnostic and producing an accurate forecast are related but distinct
+   questions. Report both. A model can be the right practical choice
+   despite an imperfect diagnostic, but say so explicitly rather than
+   quietly dropping the diagnostic when it's inconvenient — and never
+   report holdout accuracy from a single 28-day window as the final word;
+   Day 2's backtesting lesson is precisely about not trusting one split.
+
+Continue to the lab: [02_lab_arima_ets.ipynb](02_lab_arima_ets.ipynb)

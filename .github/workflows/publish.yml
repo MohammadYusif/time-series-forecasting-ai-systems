@@ -1,0 +1,77 @@
+name: Publish the course site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.qmd"
+      - "day1/**"
+      - "day2/**"
+      - "day3/**"
+      - "reference/**"
+      - "_quarto.yml"
+      - ".github/workflows/publish.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.10.18
+
+      # Nothing on the site executes — `execute: enabled: false` in
+      # _quarto.yml. Lab notebooks render from the outputs they were
+      # committed with; see colab-sim/ for how those were produced.
+      - name: Render
+        run: quarto render
+
+      - name: Check every internal link resolves
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          site = pathlib.Path("_site")
+          anchor = re.compile(r'<a[^>]+href="([^"]+)"', re.I)
+          image = re.compile(r'<img[^>]+src="([^"]+)"', re.I)
+          broken = []
+          for page in site.rglob("*.html"):
+              html = page.read_text(encoding="utf-8", errors="ignore")
+              for href in anchor.findall(html) + image.findall(html):
+                  if href.startswith(("http://", "https://", "#", "mailto:", "data:")):
+                      continue
+                  target = href.split("#")[0].split("?")[0]
+                  if target and not (page.parent / target).resolve().exists():
+                      broken.append(f"{page.relative_to(site)} -> {href}")
+          if broken:
+              print("broken internal links:")
+              print("\n".join("  " + row for row in broken))
+              sys.exit(1)
+          print("internal links: all resolve")
+          PY
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

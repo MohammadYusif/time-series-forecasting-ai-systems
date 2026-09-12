@@ -1,0 +1,239 @@
+---
+title: "Metrics Cheat Sheet"
+---
+
+Every metric on this page lives in one place — `common/metrics.py` — and
+every lab fetches that exact file instead of reimplementing a formula in a
+notebook cell. That means this page doubles as an API reference: the
+signatures below are the real ones, copy-pasteable, not paraphrased.
+
+```python
+sys.path.insert(0, str(pathlib.Path(fetch("common/metrics.py")).parent))
+from metrics import mae, rmse, mape, smape, wape, mase, pinball_loss, coverage, interval_width
+```
+
+All nine functions accept numpy arrays or anything array-like (a pandas
+Series works fine) and return a plain Python `float`.
+
+## The whole set, at a glance
+
+| Function | Range | Reach for it when | Breaks when |
+|---|---|---|---|
+| `mae(y_true, y_pred)` | 0 → ∞, series' own units | you want an error size a non-technical reader can sanity-check against the raw numbers | never — always defined, but not comparable across series of different scale |
+| `rmse(y_true, y_pred)` | 0 → ∞, series' own units | a few big misses matter more than many small ones (demand spikes, SLA breaches) | same scale problem as MAE, worse — a single large error dominates the average |
+| `mape(y_true, y_pred, epsilon=1e-8)` | 0 → ∞ (%), typically 0–100 | actuals are safely away from zero and you need a scale-free number to report to non-technical stakeholders | any actual near 0 — the fraction blows up (see the worked example below) |
+| `smape(y_true, y_pred, epsilon=1e-8)` | 0 → 200 (%) | same as MAPE, but you want a hard ceiling instead of an unbounded blow-up | still distorted near 0; bounded is not the same as *accurate* there |
+| `wape(y_true, y_pred)` | 0 → ∞ (%), typically 0–100 | the series has zeros or near-zeros anywhere in the window — the standard choice for `data/intermittent_demand.csv` | almost never — see the one documented edge case below |
+| `mase(y_true, y_pred, y_train, seasonal_period=1)` | 0 → ∞, unitless (<1.0 beats naive) | comparing forecast quality across series of different scale, or against a seasonal-naive baseline | `y_train` too short for `seasonal_period`, or `y_train` is perfectly flat (raises `ValueError` both times — see below) |
+| `pinball_loss(y_true, y_pred_quantile, quantile)` | 0 → ∞, series' own units | scoring one predicted quantile (a single interval bound), not a point forecast | `quantile` outside `(0, 1)` — raises `ValueError` |
+| `coverage(y_true, lower, upper)` | 0.0 → 1.0 | checking whether a prediction interval's nominal level (e.g. 80%) matches reality | read alone — a too-wide interval hits any coverage target trivially; always pair with `interval_width` |
+| `interval_width(lower, upper)` | 0 → ∞, series' own units | the other half of calibration — is the interval usefully narrow, or just wide enough to always be right? | never breaks, but is meaningless without `coverage` alongside it |
+
+The rest of this page works through each group with real numbers from the
+course datasets — not placeholders — so "breaks when" above isn't an
+abstract warning.
+
+## Scale-dependent: MAE and RMSE
+
+```python
+def mae(y_true, y_pred) -> float          # mean(|y_true - y_pred|)
+def rmse(y_true, y_pred) -> float         # sqrt(mean((y_true - y_pred)**2))
+```
+
+$$\text{MAE} = \frac{1}{n}\sum_{i=1}^n |y_i - \hat{y}_i| \qquad
+\text{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^n (y_i - \hat{y}_i)^2}$$
+
+Both report error in the series' own units — units sold, headcount,
+index points — which makes them easy to sanity-check but impossible to
+compare across series of different scale (a MAE of 60 is excellent for a
+series averaging 2,000 units/day and useless for one averaging 8).
+
+RMSE penalizes large misses harder than MAE because the errors are squared
+before averaging; the two agree closely on a well-behaved forecast and
+diverge when a few folds have unusually large misses (RMSE > MAE
+noticeably, sometimes by a wide margin, on `data/workforce_demand.csv`
+around its 2025-04-01 structural break — the whole point of that dataset).
+
+**Worked example.** A seasonal-naive forecast (repeat last week, `period=7`)
+against the last 14 days of `data/retail_demand.csv`, Riyadh/Grocery:
+
+```python
+from backtest import seasonal_naive_forecast
+
+y_pred = seasonal_naive_forecast(y_train, horizon=14, period=7)
+mae(y_true, y_pred)   # 61.21
+rmse(y_true, y_pred)  # 69.44
+```
+
+RMSE (69.44) sitting only a little above MAE (61.21) says the 14-day
+window has no single catastrophic miss — a well-behaved fold, not a promo
+shock that the seasonal-naive baseline walked straight into.
+
+## Percentage-based: MAPE, sMAPE, WAPE
+
+```python
+def mape(y_true, y_pred, epsilon: float = 1e-8) -> float
+def smape(y_true, y_pred, epsilon: float = 1e-8) -> float
+def wape(y_true, y_pred) -> float
+```
+
+$$\text{MAPE} = \frac{100}{n}\sum_{i=1}^n \left|\frac{y_i - \hat{y}_i}{y_i + \epsilon}\right|
+\qquad
+\text{sMAPE} = \frac{100}{n}\sum_{i=1}^n \frac{2\,|\hat{y}_i - y_i|}{|y_i| + |\hat{y}_i| + \epsilon}
+\qquad
+\text{WAPE} = 100 \times \frac{\sum_i |y_i - \hat{y}_i|}{\sum_i |y_i|}$$
+
+MAPE divides **row by row**, so one near-zero actual can dominate the
+whole average regardless of how good the forecast is everywhere else.
+sMAPE's symmetric denominator bounds the result to 0–200%, but "bounded"
+just means it fails more politely — it's still distorted by the same
+near-zero rows. WAPE never divides row by row: it sums all the absolute
+errors and all the actual volume first, *then* divides once, so a single
+zero actual can't blow anything up.
+
+On the retail example above (no near-zero days), all three roughly agree:
+
+```python
+mape(y_true, y_pred)   # 9.94
+smape(y_true, y_pred)  # 10.33
+wape(y_true, y_pred)   # 9.51
+```
+
+**This is exactly why `data/intermittent_demand.csv` exists** — ~95% of
+its rows are zero (94.0% for SKU-A1102, 97.1% for SKU-B2044 specifically),
+and that's where MAPE stops being a usable number. Take a real 10-day
+window for SKU-B2044 (2025-03-18 to 2025-03-27), actual units ordered
+`[0, 2, 0, 5, 0, 0, 0, 0, 0, 4]`, against a flat forecast of 4.57 (the
+mean of that SKU's nonzero training days — a plausible-looking baseline,
+not a strawman):
+
+```python
+mae(actual, forecast)    # 3.56   -- reads fine on its own
+mape(actual, forecast)   # 32,000,000,015.1   -- meaningless
+smape(actual, forecast)  # 150.1  -- bounded, still bad
+wape(actual, forecast)   # 323.4  -- bad, and you can actually reason about it
+```
+
+The MAPE figure isn't a typo — seven of the ten actuals are exactly 0, and
+`mape`'s epsilon (`1e-8`) exists only to stop a literal division by zero,
+not to produce a sane result: each of those seven terms works out to
+roughly `4.57 / 1e-8 * 100 ≈ 4.6 × 10^10`. sMAPE's 150.1% is at least on a
+fixed 0–200 scale, but it's still telling you almost nothing about
+forecast quality on this window. WAPE's 323.4% is the only one of the
+three you can actually act on: total absolute error was 3.2× total actual
+volume — bad, but a real, interpretable number. **Rule of thumb: never
+report bare MAPE on a series that can hit zero. Use WAPE.**
+
+WAPE has one documented edge case worth knowing rather than being
+surprised by: if a whole window's actuals sum to exactly 0 (a horizon that
+happened to be all-zero — realistic on `data/intermittent_demand.csv`),
+`wape` can't divide by that zero total, so it falls back to `0.0` if the
+forecast was also all-zero, or `100.0` if the forecast predicted anything
+nonzero. It's not raising an error, but a `0.0` in that situation is
+"vacuously right," not "the model nailed a hard case" — check whether the
+window itself was all-zero before reading a suspiciously perfect WAPE.
+
+## Scaled: MASE
+
+```python
+def mase(y_true, y_pred, y_train, seasonal_period: int = 1) -> float
+```
+
+$$\text{MASE} = \frac{\dfrac{1}{n}\sum_i |y_i - \hat{y}_i|}
+{\dfrac{1}{n-m}\sum_{t=m+1}^{n} |y^{train}_t - y^{train}_{t-m}|}
+\qquad m = \texttt{seasonal\_period}$$
+
+MASE scales your forecast's MAE by the in-sample MAE of a seasonal-naive
+forecast computed on `y_train` — the training history, never the test
+window itself. A value below 1.0 means "beats naive repetition of the
+last seasonal cycle"; above 1.0 means naive repetition would have done
+better. Because it's a ratio, it's comparable across series of completely
+different scale — units sold, headcount, an index — in a way raw MAE/RMSE
+never are.
+
+Use `seasonal_period=1` (the default) for a non-seasonal naive baseline
+(repeat the last value); use the series' real period — `7` for
+daily-with-weekly-seasonality like `data/retail_demand.csv`, `12` for
+monthly-with-yearly-seasonality like `data/economic_indicator.csv` — when
+the series has one, so you're scoring against a fair baseline instead of
+an easy one.
+
+```python
+mase(y_true, y_pred, y_train, seasonal_period=7)  # 0.69
+```
+
+0.69 on the retail seasonal-naive example says the forecast beats a naive
+repeat-last-week baseline by 31% — expected here, since the forecast *is*
+that baseline evaluated on its own scoring metric; a genuinely different
+model scoring well below 1.0 against this baseline is the bar worth
+clearing on Day 2 and Day 3.
+
+**Two ways `mase` raises instead of returning a number, both deliberate:**
+
+```python
+mase(y_true, y_pred, y_train, seasonal_period=30)
+# ValueError: y_train must be longer than seasonal_period to scale
+# against a naive forecast
+```
+
+`y_train` simply isn't long enough to compute even one seasonal-naive
+error at that period — this is `data/economic_indicator.csv` territory
+(108 monthly rows total; an early backtest fold's training window can be
+short) more than it's the daily retail series.
+
+```python
+mase(y_true, y_pred, flat_train, seasonal_period=7)  # flat_train: 30 identical values
+# ValueError: in-sample naive-seasonal MAE is 0 (a perfectly repeating
+# training series) -- MASE is undefined; report MAE instead
+```
+
+A perfectly flat (or perfectly seasonal-with-zero-noise) training window
+makes the naive baseline's own error exactly 0 — the denominator of the
+ratio — so MASE is undefined by construction, not a bug. Report MAE for
+that fold instead of forcing a scaled metric where scaling doesn't apply.
+
+## Probabilistic: pinball loss, coverage, interval width
+
+```python
+def pinball_loss(y_true, y_pred_quantile, quantile: float) -> float
+def coverage(y_true, lower, upper) -> float
+def interval_width(lower, upper) -> float
+```
+
+$$L_q(y, \hat{q}) = \max\big(q\,(y-\hat{q}),\ (q-1)(y-\hat{q})\big)$$
+
+Pinball loss scores **one predicted quantile** — say, the upper bound of
+an 80% interval, `q=0.9` — the way MAE scores a point forecast: lower is
+better, 0 only for a perfect quantile forecast. It's asymmetric on
+purpose: under-predicting a high quantile is penalized more than
+over-predicting it, which is exactly what makes it the loss a quantile
+regressor is trained to minimize (Day 3's probabilistic-forecasting lab).
+
+`coverage` and `interval_width` are the pair you always report together,
+never one alone — an interval evaluated on the same retail example, an
+80%-nominal band built as `seasonal_naive ± 1.2816σ` (σ from the training
+residuals):
+
+```python
+coverage(y_true, lower, upper)        # 1.0   -- nominal target was 0.8
+interval_width(lower, upper)          # 440.07
+pinball_loss(y_true, upper, 0.9)      # 19.68
+pinball_loss(y_true, lower, 0.1)      # 24.33
+```
+
+Coverage of 1.0 against an 80% nominal target looks like a win until you
+check the width: this interval is over-covering because it's simply too
+wide (±440 units around forecasts in the hundreds), not because the model
+is unusually good. A wide-enough interval hits any coverage target for
+free — see `reference/tooling_guide.qmd` and
+`day3/05_probabilistic_forecasting.qmd` for calibration in practice, and
+never quote a `coverage` number in isolation from `interval_width` again.
+
+## See also
+
+- [day2/04_backtesting.qmd](../day2/04_backtesting.qmd) — where these
+  metrics get computed per fold, not just once
+- [day3/05_probabilistic_forecasting.qmd](../day3/05_probabilistic_forecasting.qmd)
+  — pinball loss, coverage, and interval width in a full workflow
+- [reference/tooling_guide.qmd](tooling_guide.qmd) — which library hands
+  you `predict_interval`/`predict_quantiles` without hand-rolling one

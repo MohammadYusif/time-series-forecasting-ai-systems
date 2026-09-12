@@ -1,0 +1,196 @@
+---
+title: "Backtesting Frameworks & Time-Based Validation"
+format: html
+---
+
+Every model scored so far in this course — Day 1's SARIMAX and Holt-Winters,
+the previous page's LightGBM forecaster — was checked against exactly one
+60-day holdout. That verdict rests on one draw. Maybe those particular 60
+days happened to be unusually calm, or happened to fall right after a promo
+shock the model handled well by luck. The only way to find out is to check
+more than one holdout — which is what this page is actually about: not a
+new model, but a more honest way of asking "how good is this."
+
+## Why k-fold cross-validation is the wrong tool here
+
+Ordinary k-fold CV shuffles rows into folds at random, trains on `k-1` of
+them, and tests on the remainder — repeated `k` times. It's the right
+default for i.i.d. data, and the wrong one for a time series, for one exact
+reason: a random shuffle happily puts day 900 in the training fold and day
+400 in the test fold. The model then gets to train on the future before
+being tested on the past. That's not a subtle statistical concern — it's the
+model seeing data that, at the moment it's meant to be forecasting day 400,
+would not exist yet. A backtest that permits this will read better than a
+model deployed for real ever will.
+
+The fix is **walk-forward validation**: every fold's test window is placed
+strictly after everything in that fold's training window. No shuffling, no
+exception.
+
+## Expanding vs rolling windows
+
+`common/backtest.py` implements both:
+
+```python
+expanding_window_splits(n, n_folds, horizon, min_train_size)
+rolling_window_splits(n, n_folds, horizon, train_size)
+```
+
+Both return `n_folds` pairs of `(train_slice, test_slice)` over a
+length-`n` sequence indexed in time order, and both place every fold's test
+window immediately after that fold's train window — the difference is what
+happens to the training window as the folds advance.
+
+**Expanding** grows the training window forward — every fold trains on
+everything before it, including the previous fold's test region:
+
+```{python}
+#| eval: false
+from backtest import expanding_window_splits
+
+splits = expanding_window_splits(n=1096, n_folds=5, horizon=14, min_train_size=730)
+```
+
+Run against `data/retail_demand.csv`'s Riyadh/Grocery series (1,096 rows,
+2023-01-01 to 2025-12-31), this actually returns:
+
+| fold | train rows | train span | test span |
+|--:|--:|---|---|
+| 0 | 1,026 | 2023-01-01 – 2025-10-22 | 2025-10-23 – 2025-11-05 |
+| 1 | 1,040 | 2023-01-01 – 2025-11-05 | 2025-11-06 – 2025-11-19 |
+| 2 | 1,054 | 2023-01-01 – 2025-11-19 | 2025-11-20 – 2025-12-03 |
+| 3 | 1,068 | 2023-01-01 – 2025-12-03 | 2025-12-04 – 2025-12-17 |
+| 4 | 1,082 | 2023-01-01 – 2025-12-17 | 2025-12-18 – 2025-12-31 |
+
+Notice fold 1's training window (up to 2025-11-05) includes fold 0's entire
+test window (2025-10-23 to 2025-11-05) — that's expansion, not overlap: fold
+1 is *allowed* to learn from days that were held out a moment ago, because by
+the time fold 1 runs, those days are legitimately in the past. The last
+fold's test window ends exactly at day 1,096 — today, backtested against the
+most recent real data available.
+
+**Rolling** keeps the training window a *fixed size* and slides it forward
+instead of growing it:
+
+```{python}
+#| eval: false
+from backtest import rolling_window_splits
+
+splits = rolling_window_splits(n=1096, n_folds=5, horizon=14, train_size=365)
+```
+
+On the same series, this returns:
+
+| fold | train rows | train span | test span |
+|--:|--:|---|---|
+| 0 | 365 | 2024-10-23 – 2025-10-22 | 2025-10-23 – 2025-11-05 |
+| 1 | 365 | 2024-11-06 – 2025-11-05 | 2025-11-06 – 2025-11-19 |
+| 2 | 365 | 2024-11-20 – 2025-11-19 | 2025-11-20 – 2025-12-03 |
+| 3 | 365 | 2024-12-04 – 2025-12-03 | 2025-12-04 – 2025-12-17 |
+| 4 | 365 | 2024-12-18 – 2025-12-17 | 2025-12-18 – 2025-12-31 |
+
+Every fold trains on exactly one year, whatever year that happens to be by
+the time the fold runs. The test windows are identical to the expanding
+case — only the training window's shape differs.
+
+**When each earns its place:** expanding is the right default whenever older
+history is still relevant — more data almost never hurts a model that can
+use it, and an expanding window never throws any of it away. Reach for
+rolling instead when you have a specific reason to believe older history is
+actively *misleading* rather than merely smaller: a product line that was
+discontinued and relaunched differently, a policy change that altered
+behavior, or — the concrete case in this course —
+`data/workforce_demand.csv`'s structural break on 2025-04-01. A model
+trained on an expanding window that still includes 2024 keeps re-learning
+against a regime that no longer applies; a rolling window naturally ages
+that period out once it falls outside the fixed train size.
+
+## Running a model through the harness
+
+`run_backtest(y, splits, fit_predict_fn)` is the loop every lab from here on
+plugs a model into:
+
+```{python}
+#| eval: false
+from backtest import run_backtest, seasonal_naive_forecast
+
+def fit_predict(y_train, horizon):
+    return seasonal_naive_forecast(y_train, horizon, period=7)
+
+results = run_backtest(series["units_sold"].to_numpy(), splits, fit_predict)
+# results[i] = {"fold": i, "y_train": ..., "y_true": ..., "y_pred": ...}
+```
+
+`fit_predict_fn` is called **fresh, once per fold**, and is only ever handed
+that fold's own `y_train` — never the test window, never a later fold's
+data, never a model object left over from a previous fold. That last part is
+worth being explicit about, because it is the one leakage mode no amount of
+correct slicing can catch on its own: a `fit_predict_fn` that closes over a
+model fit once outside the loop, and ignores the `y_train` it's actually
+handed, defeats the whole harness from the inside while still returning the
+right *shape* of output. The guarantee `run_backtest` gives you is "this
+function only ever received this fold's train data" — it cannot verify what
+the function chose to do with it. Writing `fit_predict_fn` as a plain
+function that fits from scratch on its argument, with nothing referencing
+state from outside its own body, is what makes the guarantee real rather
+than nominal.
+
+## Choosing fold size and horizon
+
+Two knobs, both worth setting deliberately rather than by default:
+
+- **Horizon** should match how far ahead the model actually needs to
+  forecast in practice. A retailer replanning weekly wants a ~7–14 day
+  horizon scored, not a 1-day one — a model can look excellent one step
+  ahead and fall apart by day 10 as compounding error (see the previous
+  page's recursive-forecast discussion) catches up with it.
+- **Number of folds and minimum train size** trade off against each other
+  under a fixed amount of history: more folds means more evidence about
+  variance, but each fold needs enough *train* history behind it to be a
+  fair test — `min_train_size=730` above is deliberately about two years,
+  so every fold's model has seen at least two full annual cycles before
+  being judged on this series' yearly seasonality.
+
+## Aggregating across folds — report the spread, not just the mean
+
+A single mean across 5 folds can hide exactly the information walk-forward
+validation exists to surface. Two models with an identical mean WAPE can
+differ enormously in how *consistent* that WAPE is fold to fold — one might
+be steady, the other might nail 4 folds and blow up on the one that
+contained a demand shock. Report both the mean and the spread (standard
+deviation, or the min/max range) across folds, and look at the per-fold
+numbers directly before trusting a single summary statistic. The next page's
+lab does exactly this — a results table with one row per fold, not just one
+final number per model.
+
+## Leakage pitfalls, beyond the shuffle
+
+The random-shuffle mistake above is the obvious one. Three quieter ones cost
+just as much:
+
+- **A global scaler or normalizer fit on the whole series before
+  splitting.** `StandardScaler().fit(df)` computed once over the entire
+  series, then applied inside every fold, lets fold 0's "test" statistics
+  be informed by data from fold 4's test window — the mean and variance used
+  to scale fold 0's held-out days were computed *including* days two years
+  in that fold's own future. Fit any scaler, encoder, or feature-selection
+  step **inside** the loop, on that fold's `y_train` only.
+- **A feature-engineering function computed once, globally, before the
+  fold loop starts.** This is the same bug as the previous page's lag/rolling
+  leakage warning, just relocated: if `make_features(df)` is called once on
+  the whole dataframe and the fold loop merely slices rows out of the
+  result, a lag or rolling feature for an early fold's test row can still
+  have been computed using rows from far later in the series, depending on
+  how the function was written. The safest structure recomputes features
+  from each fold's own `y_train` inside `fit_predict_fn`, even though it
+  costs more compute than doing it once — see how Lab 4 structures this.
+- **Reusing one fitted model object across folds "to save time."** A model
+  fit once on fold 4's larger training window and then also used to score
+  fold 0's test window has effectively trained on data from fold 0's future
+  — the opposite direction of the usual leakage story, but leakage all the
+  same. `run_backtest` calling `fit_predict_fn` fresh per fold is what
+  prevents this, provided the function itself doesn't work around it (see
+  above).
+
+Continue to the lab:
+[04_lab_backtesting_framework.ipynb](04_lab_backtesting_framework.ipynb)

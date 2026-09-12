@@ -1,0 +1,199 @@
+---
+title: "Model Comparison: Choosing a Forecasting Family"
+---
+
+By this point you have fit models from all four tools this course names —
+`statsmodels` (ARIMA/ETS), `Prophet`, `sktime`, and `LightGBM` — on data
+with genuinely different shapes: a short monthly series, six daily retail
+series, a series with a structural break, and a series that's 95% zeros.
+Objective 7 is turning that hands-on experience into a repeatable decision
+process, so that "which model should I use" stops being a coin flip and
+starts being a checklist you can defend in a write-up.
+
+There is no universally best model family. There is a best family **for a
+given combination of**: how much history you have, how many series you
+need to forecast, whether anyone needs to explain the forecast to a human,
+whether you need calibrated intervals rather than just a point number,
+whether you have known future information (holidays, promotions, exogenous
+regressors), whether the demand is sparse, and how much compute and
+latency you can spend. Walk through each axis, then use the decision table
+and the four worked scenarios below — one per course dataset — to see the
+axes actually decide something.
+
+## The axes
+
+**History length.** Classical models (ARIMA, ETS) can be fit on
+surprisingly little data — a couple of full seasonal cycles is often
+enough to estimate a handful of parameters. Tree-based models like
+LightGBM need enough rows for lag and rolling-window features to carry
+signal after you've spent the first `max(lags)` rows just constructing
+those features; a few hundred rows is thin, a few thousand is comfortable.
+`data/economic_indicator.csv` has 108 monthly rows total — that constraint
+alone rules out a lot of tools before you've even looked at the shape of
+the data.
+
+**Number of series.** Fitting one ARIMA model, one Prophet model, or one
+sktime forecaster per series is the default workflow for all three, and it
+gets expensive linearly as the series count grows. LightGBM's usual
+advantage is the opposite: stack every series into one long-format table
+(exactly the shape `data/retail_demand.csv` and `data/intermittent_demand.csv`
+already come in) and train **one global model** across all of them —
+series that individually don't have much history can still share what the
+model learns about weekday effects, trend, or holiday bumps from every
+other series in the stack.
+
+**Interpretability.** ARIMA/ETS coefficients and Prophet's decomposed
+trend/seasonality/holiday components are readable by a domain expert who
+has never seen the code. LightGBM feature importances tell you which
+*features* mattered, not a story about trend or seasonality you could put
+in a slide. If a forecast needs to be explained to a non-technical
+stakeholder in terms of "seasonality" and "trend," that pulls toward the
+classical/Prophet side regardless of raw accuracy.
+
+**Calibrated prediction intervals.** `statsmodels`, `Prophet`, and
+`sktime` forecasters all expose intervals natively (Day 3's first lesson).
+LightGBM has no native interval — you get one only by adding a quantile
+objective (three separate models) or wrapping it in the conformal
+procedure from `05_probabilistic_forecasting.qmd`. That's not a
+disqualifier, but it's an extra step you must remember to actually do —
+"a LightGBM model with an interval" is a choice, not a default.
+
+**Exogenous regressors and known holidays.** `SARIMAX` (statsmodels)
+accepts an `exog` matrix. Prophet has first-class holiday/regressor
+support (`add_regressor`, a `holidays` dataframe) — this is close to its
+headline feature. sktime forecasters that wrap an exog-capable estimator
+support it too. LightGBM handles it trivially — anything you know about
+the future (a promo flag, a public holiday indicator) is just another
+feature column, for every series in the stack at once.
+
+**Intermittent / sparse demand.** None of the four tools handles this
+well by just pointing it at the raw series. `data/intermittent_demand.csv`
+is ~95% zero rows — a distribution that breaks ARIMA/ETS's implicit
+continuity assumption and Prophet's smooth trend+seasonality
+decomposition equally badly. The textbook answer for genuinely
+intermittent demand is **Croston's method** or its bias-corrected
+successor **TSB (Teunter-Syntetos-Babai)** — both explicitly model
+"time between non-zero demands" and "size of non-zero demand" as separate
+processes. Neither ships in this course's four tools, and both are out of
+scope here — know the names, know when you'd reach for them, and know that
+"none of my four tools fit this well" is itself a valid, gradable
+conclusion for this kind of series rather than a sign you picked the wrong
+one among the four.
+
+**Compute and latency budget.** Per-series classical/Prophet fits are
+cheap individually but don't parallelize for free at scale — a thousand
+series means a thousand fits, refit on every new backtest fold. A single
+global LightGBM model amortizes training cost across every series it
+covers and produces cheap, fast inference once trained; sktime's own
+overhead is whatever the wrapped estimator costs, since it's an
+orchestration layer, not a model family in its own right.
+
+## Decision table
+
+| Criterion | statsmodels (ARIMA/ETS) | Prophet | sktime | LightGBM |
+|---|---|---|---|---|
+| Minimum useful history | a few seasonal cycles | ideally 1+ year of daily-ish data | same limits as whatever estimator is wrapped | needs enough rows to make lag/rolling features informative — hundreds at minimum |
+| Many series at once | one fit per series | one fit per series | one fit per series, unless using a global reduction forecaster | one global model trained across all series is a first-class use case |
+| Interpretability | high — named ARMA/ETS coefficients, checkable residual diagnostics | medium — readable trend/seasonality/holiday components | inherits the wrapped estimator's | low — feature importances only |
+| Native prediction intervals | yes, analytic | yes (`interval_width`, MAP or MCMC) | yes, uniformly (`predict_interval`/`predict_quantiles`) regardless of estimator | no — requires a quantile objective or a conformal wrapper |
+| Exogenous regressors / known holidays | yes (`SARIMAX` `exog`) | yes, first-class (`holidays`, `add_regressor`) | yes, if the wrapped estimator supports it | yes, trivially — just more feature columns |
+| Sparse/intermittent demand | poor fit — assumes near-continuous residuals | poor fit — assumes a smooth trend+seasonality decomposition | only as good as the wrapped estimator, which inherits the same weaknesses | usable if reframed as a global model scored with WAPE; Croston's/TSB is the real specialist tool (out of scope) |
+| Compute for many series | scales linearly, one fit each | scales linearly, one fit each | same as the wrapped estimator | cheap per series after training one global model |
+
+## Four scenarios, this course's four datasets
+
+**`data/economic_indicator.csv` — 108 monthly points, one series.**
+Reach for **statsmodels (ARIMA or ETS)** first. A classical model that
+estimates a small, fixed number of parameters is the naturally
+appropriate tool for a short, low-frequency series like this one — and
+`06_lab_model_comparison.ipynb`'s actual backtest bears that out:
+Holt-Winters posts the lowest error of the three models tested (mean WAPE
+2.19 vs LightGBM's 2.39). But read that result carefully rather than
+over-generalizing from it: LightGBM was **not** the weak model here —
+it finished a close second, far ahead of a seasonal-naive baseline
+(WAPE 7.27) — despite losing rows to a `lag_12` feature on only 108 points
+to begin with. "Not enough history for a tree model" is a real effect in
+general, but this particular series is smooth and low-noise enough that
+LightGBM adapted to the short history better than a rule-of-thumb ("trees
+need volume") would predict; Holt-Winters wins here because its
+few-parameter trend+cycle shape matches this series well, not because the
+alternative failed. Prophet remains a defensible second choice if you want
+a fast trend/cycle decomposition without hand-picking an ARIMA order, but
+its real strength — holiday effects and multiple sub-weekly seasonalities
+on daily data — isn't exercised by a single monthly series.
+
+**`data/retail_demand.csv` — 6 daily series, ~3 years, strong weekly +
+yearly seasonality, promo shocks.** In principle, this is where
+**LightGBM** should earn its place: stack all 6 region×category series
+into one long-format table (the file is already in that shape) and train
+one *global* model with lag, rolling, and calendar features, plus a
+promo/holiday-window flag — pooling lets the model borrow signal about
+weekday effects and holiday-style bumps across all 6 series instead of
+learning each one from scratch. **That global-model version is not what
+this course actually tested, and the honest result is worth stating
+plainly:** `06_lab_model_comparison.ipynb` backtests a *per-series*
+LightGBM (Days 2-3's approach throughout, one model per series, matching
+Labs 3/4) against Holt-Winters on this exact series — and Holt-Winters
+wins (mean WAPE 6.24 vs LightGBM's 8.08). That does not refute the
+pooling argument above; it shows that argument's advantage specifically
+depends on pooling, which single-series LightGBM does not get to use. If
+you only need to forecast one series, this course's own numbers say try
+Holt-Winters first and treat "LightGBM should win" as a hypothesis to test
+with pooling, not a default. Prophet is a strong choice for a *quick,
+per-series* diagnostic pass, since its holiday-with-a-drift-window support
+(`data/retail_demand.csv`'s bumps are explicitly modeled on drifting,
+Hijri-like dates in `generate_series.py`) maps directly onto a feature it
+was built for; sktime's reduction forecasters give you the LightGBM-style
+global-model idea with the uniform `predict_interval` API from the
+previous lesson, if calibrated intervals matter more than raw speed.
+
+**`data/workforce_demand.csv` — one series, one structural break.** The
+tool choice here matters less than the **backtest design**
+(`day2/04_backtesting.qmd`) — and `06_lab_model_comparison.ipynb`'s real
+result is more specific, and more useful, than "the break hurts every
+model." With an expanding window (40 folds, 10-day horizon), all three
+model families spike together on the single fold whose test window sits
+right at 2025-04-01 (WAPE jumps from a typical 4-10% to 17-19% for all
+three alike) — the break is not hidden by expanding-window validation, it
+shows up clearly, exactly where it should. What's worth noticing is how
+*fast* every model recovers once even a little post-break data enters an
+expanding training window: by the very next fold, WAPE is back in the
+normal range for all three. Averaged across every post-break fold, mean
+WAPE even comes out lower than the pre-break average — read that as a
+scale artifact of WAPE (post-break demand runs about 31% higher, so the
+same absolute error is a smaller percentage of a bigger number), not as
+genuinely easier forecasting; MAE tells a flatter story pre vs post. A
+*rolling* window (`common/backtest.py`'s `rolling_window_splits`) is still
+worth trying if you suspect recovery would be slower on a series with a
+sparser post-break sample than this one has, precisely because it ages
+stale pre-break history out rather than relying on the break simply being
+outnumbered eventually — but on this series, with this fold design, the
+expanding window did not need that help. This scenario is a reminder that
+"which model" and "how you validate it" are not independent choices, and
+that a single pre/post average can hide a real, sharp, single-fold shock
+that a per-fold table makes obvious.
+
+**`data/intermittent_demand.csv` — 4 SKUs, ~95% zero rows.** First, change
+the *metric*, not the model: report WAPE, never bare MAPE, on a series
+this sparse (`common/metrics.py`'s docstring says exactly why — MAPE
+divides row by row and blows up near zero). Then, among this course's four
+tools, a **global LightGBM model** trained across all 4 SKUs stacked
+together is the most defensible choice — it turns four thin, mostly-zero
+series into one dataset large enough to learn "does an order happen at
+all" and "how large when it does" as related patterns. statsmodels
+ARIMA/ETS and Prophet both implicitly assume something closer to a
+continuous, smoothly-varying series and represent 95%-zero data poorly no
+matter how the parameters are tuned. The honest full answer, outside this
+course's four tools, is Croston's method or TSB — say so explicitly in a
+write-up rather than forcing one of the four tools to pretend it's the
+specialist solution it isn't.
+
+## What this buys you going into the lab
+
+The lab has you run the same backtest harness against at least two model
+families on the same series and hold both to the same coverage/width and
+MASE/WAPE bar — the point isn't finding one "winner" in the abstract, it's
+producing the kind of side-by-side comparison a real forecasting decision
+is actually made from.
+
+Continue to the lab: [06_lab_model_comparison.ipynb](06_lab_model_comparison.ipynb)

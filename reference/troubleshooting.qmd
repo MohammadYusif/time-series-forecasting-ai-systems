@@ -27,7 +27,7 @@ cuts off at **p** (AR order), **A**CF cuts off at **q** (MA order) — or just
 say it out loud as "PACF picks P, ACF picks Q." When both plots tail off
 gradually instead of cutting off cleanly, that's evidence for a mixed
 ARMA process, not a sign you're reading the wrong plot. See
-[day1/01_decomposition_and_autocorrelation.qmd](../day1/01_decomposition_and_autocorrelation.qmd)
+[day1/01_decomposition_and_autocorrelation](../day1/01_decomposition_and_autocorrelation.qmd)
 for worked examples on `data/retail_demand.csv`.
 
 ### Misreading the ADF test's p-value direction
@@ -119,8 +119,8 @@ for step in range(horizon):
 Before trusting any multi-step LightGBM result, check the feature-building
 code for exactly this: does it ever read `y_true`/the original series past
 the point the model is supposed to know about? If yes, it's leaking. See
-[day2/03_feature_engineering.qmd](../day2/03_feature_engineering.qmd) and
-[day2/04_backtesting.qmd](../day2/04_backtesting.qmd).
+[day2/03_feature_engineering](../day2/03_feature_engineering.qmd) and
+[day2/04_backtesting](../day2/04_backtesting.qmd).
 
 ### A global scaler fit on the whole series, test region included
 
@@ -186,7 +186,7 @@ Nothing is wrong; it's a one-time cost per environment, not per call.
 disruptive in a live demo, "warm up" Prophet with a throwaway fit on a
 tiny dummy series before the real one, or budget for it explicitly in
 timing comparisons (see
-[reference/tooling_guide.qmd](tooling_guide.qmd)'s "typical fit time" row)
+[reference/tooling_guide](tooling_guide.qmd)'s "typical fit time" row)
 rather than reporting Prophet's cold-start time as its steady-state speed.
 
 ### sktime API changes between versions
@@ -226,7 +226,7 @@ happens to be perfectly flat (or perfectly repeats its own seasonal
 cycle with zero noise), the naive baseline's own error is exactly 0 — the
 denominator of the ratio — so the scaled metric is mathematically
 undefined, not a bug in `common/metrics.py`. See
-[reference/metrics_cheatsheet.qmd](metrics_cheatsheet.qmd#scaled-mase)
+[reference/metrics_cheatsheet](metrics_cheatsheet.qmd#scaled-mase)
 for the full explanation and the companion "`y_train` too short for
 `seasonal_period`" error.
 
@@ -260,7 +260,7 @@ paired `.qmd` lesson describes — or a `fetch("data/...")` call in a
 notebook you're actively editing keeps returning old content.
 
 **Cause:** `fetch()` (defined in every lab's setup cell — see
-[setup.qmd](../setup.qmd)) checks for a local copy in the current
+[setup](../setup.qmd)) checks for a local copy in the current
 directory before downloading anything, so it will happily keep reusing a
 file it downloaded earlier in the session — including one downloaded
 before you or the course maintainers changed the source file on GitHub.

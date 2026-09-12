@@ -404,7 +404,7 @@ def build():
         nbf.v4.new_markdown_cell(LEAKAGE_MD),
         nbf.v4.new_markdown_cell(
             "Continue to the next lesson: "
-            "[05_probabilistic_forecasting.qmd](../day3/05_probabilistic_forecasting.qmd)"
+            "[05_probabilistic_forecasting](../day3/05_probabilistic_forecasting.qmd)"
         ),
     ]
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)

@@ -416,7 +416,7 @@ all of the lag features feeding the model are themselves predictions, not
 observations — the further out the forecast, the less "real" the input, and
 the more a single bad early step can echo through everything after it.
 
-Continue to the next page: [04_backtesting.qmd](04_backtesting.qmd)."""
+Continue to the next page: [04_backtesting](04_backtesting.qmd)."""
 ))
 
 nb = nbf.v4.new_notebook()

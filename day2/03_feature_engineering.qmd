@@ -317,4 +317,4 @@ build a walk-forward loop where it can't happen by construction — is the
 whole subject of the next page.
 
 Continue to the lab:
-[03_lab_lightgbm_forecast.ipynb](03_lab_lightgbm_forecast.ipynb)
+[03_lab_lightgbm_forecast](03_lab_lightgbm_forecast.ipynb)

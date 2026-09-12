@@ -262,7 +262,7 @@ project would likely also try adding exogenous regressors for the
 holiday-style bumps rather than asking a bigger `(P,D,Q)_7` term to absorb
 them.
 
-Continue to Day 2: [03_feature_engineering.qmd](../day2/03_feature_engineering.qmd)
+Continue to Day 2: [03_feature_engineering](../day2/03_feature_engineering.qmd)
 '''
 
 
@@ -274,7 +274,7 @@ def build() -> None:
             "## Lab 2 — Classical Forecasting: ARIMA & Exponential Smoothing\n"
             "\n"
             "Hands-on companion to "
-            "[02_classical_models.qmd](02_classical_models.qmd) — objective 2 "
+            "[02_classical_models](02_classical_models.qmd) — objective 2 "
             "of this course. Using the same Riyadh/Grocery series and the "
             "same holdout convention as every lab in this course, we fit a "
             "SARIMAX chosen by a small AIC search, a Holt-Winters model, and "

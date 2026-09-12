@@ -414,7 +414,7 @@ built those features yet, or need an interval on day one:
   one forecaster.
 
 Continue to the next lesson:
-[06_model_comparison.qmd](../day3/06_model_comparison.qmd)."""
+[06_model_comparison](../day3/06_model_comparison.qmd)."""
 ))
 
 nb["cells"] = cells

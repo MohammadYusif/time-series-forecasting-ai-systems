@@ -298,7 +298,7 @@ Three things from this lab feed directly into the next one
    it look like noise?" — is what Ljung-Box formalizes for a fitted model's
    residuals in the next lesson.
 
-Continue to the next lesson: [02_classical_models.qmd](02_classical_models.qmd)
+Continue to the next lesson: [02_classical_models](02_classical_models.qmd)
 '''
 
 
@@ -310,7 +310,7 @@ def build() -> None:
             "## Lab 1 — Decomposition & Autocorrelation\n"
             "\n"
             "This lab is the hands-on companion to "
-            "[01_decomposition_and_autocorrelation.qmd](01_decomposition_and_autocorrelation.qmd). "
+            "[01_decomposition_and_autocorrelation](01_decomposition_and_autocorrelation.qmd). "
             "It works with the `retail_demand.csv` golden-thread dataset "
             "(Riyadh/Grocery, daily units sold) to build the skill of "
             "*reading* a time series before modeling it: separating trend, "

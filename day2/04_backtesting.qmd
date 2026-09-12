@@ -193,4 +193,4 @@ just as much:
   above).
 
 Continue to the lab:
-[04_lab_backtesting_framework.ipynb](04_lab_backtesting_framework.ipynb)
+[04_lab_backtesting_framework](04_lab_backtesting_framework.ipynb)

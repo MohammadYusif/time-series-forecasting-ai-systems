@@ -57,7 +57,7 @@ setup_code = '''import subprocess, sys
 def _pip_install(*pkgs):
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", *pkgs], check=True)
 
-_pip_install("pandas", "numpy", "matplotlib", "lightgbm", "prophet", "sktime")
+_pip_install("pandas", "numpy", "matplotlib", "statsmodels", "lightgbm", "prophet==1.4.0", "cmdstanpy==1.3.0", "sktime")
 
 import pathlib
 import urllib.request
@@ -137,6 +137,16 @@ prophet_model = Prophet(interval_width=0.8)
 prophet_model.fit(prophet_train)
 
 future = prophet_model.make_future_dataframe(periods=HORIZON, freq="D")
+
+# Prophet's uncertainty intervals come from an internal Monte Carlo
+# simulation (sample_predictive_trend / predictive_samples) that draws
+# straight from the bare global numpy.random module -- Prophet itself
+# takes no seed/random_state of its own. Without re-seeding right before
+# .predict(), interval width (and every downstream metric derived from
+# yhat_lower/yhat_upper) is a fresh random draw on every call, even
+# against the same fitted model. Re-seed here so the captured output
+# below is exactly reproducible.
+np.random.seed(RNG_SEED)
 prophet_forecast = prophet_model.predict(future).tail(HORIZON).reset_index(drop=True)
 
 prophet_yhat = prophet_forecast["yhat"].values
